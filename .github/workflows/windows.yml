@@ -1,0 +1,61 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip pytest
+      - run: python -m pytest tests -q
+
+  windows-build:
+    name: Build Windows exe
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PySide6-Essentials pyinstaller
+      - name: Build exe
+        run: pyinstaller --noconfirm --clean modbroom.spec
+      - name: Verify the exe exists and is non-trivial
+        shell: pwsh
+        run: |
+          $f = Get-Item dist\ModBroom.exe
+          if ($f.Length -lt 20MB) { throw "exe suspiciously small: $($f.Length)" }
+          Write-Host "Built $($f.FullName) ($($f.Length) bytes)"
+      - name: Smoke test --cli-scan
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\empty_mods" | Out-Null
+          & dist\ModBroom.exe --cli-scan "$env:RUNNER_TEMP\empty_mods" ; $code = $LASTEXITCODE
+          Write-Host "exit=$code"
+          if ($code -gt 1) { throw "exe crashed running --cli-scan (exit $code)" }
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModBroom-windows
+          path: dist/ModBroom.exe
+          retention-days: 14
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ModBroom.exe
