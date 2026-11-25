@@ -8,6 +8,16 @@ A free, local desktop app for **The Sims 4** that finds broken, duplicate, confl
 
 It is the grown-up answer to "which of these 1,400 files is crashing my game."
 
+## Screenshots
+
+**Dashboard** — scan results at a glance, with severity-tinted cards and a plain-language health verdict:
+
+![ModBroom dashboard](docs/screenshot-dashboard.png)
+
+**Settings → Updates** — the packaged Windows exe checking GitHub Releases (pictured running under Wine on Linux):
+
+![ModBroom updater card](docs/screenshot-updater.png)
+
 ## What it does
 
 - **Real DBPF parsing** — reads the actual binary `.package` format (header, index, zlib **and EA RefPack** resources). Not filename guessing.
