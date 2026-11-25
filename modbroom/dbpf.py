@@ -101,7 +101,10 @@ class PackageReader:
             index_count = struct.unpack_from("<I", header, 36)[0]
             index_offset_short = struct.unpack_from("<I", header, 40)[0]
             index_size = struct.unpack_from("<I", header, 44)[0]
-            long_index_offset = struct.unpack_from("<Q", header, 68)[0]
+            # DBPF 2.x: the 64-bit index offset lives at 0x40. Maxis sets the
+            # 32-bit short offset to 0, so reading the wrong slot makes every
+            # real package look like it has no index.
+            long_index_offset = struct.unpack_from("<Q", header, 64)[0]
             index_offset = long_index_offset if long_index_offset else index_offset_short
             self._index_count = index_count
             if index_offset == 0:

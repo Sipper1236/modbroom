@@ -52,7 +52,7 @@ def _build_package(resources):
     struct.pack_into('<I', data, 36, len(entries))
     struct.pack_into('<I', data, 40, 0)                    # short offset unused
     struct.pack_into('<I', data, 44, index_size)
-    struct.pack_into('<Q', data, 68, index_offset)         # long offset
+    struct.pack_into('<Q', data, 64, index_offset)         # long offset
     return bytes(data)
 
 def _ts4script(py_name, body):

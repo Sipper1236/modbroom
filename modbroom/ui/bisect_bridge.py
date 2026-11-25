@@ -23,6 +23,14 @@ def verdict(state, sid, result):
     return _bisect.verdict(state, sid, result)
 
 
+def undo_verdict(state, sid):
+    return _bisect.undo_verdict(state, sid)
+
+
+def reject_candidate(state, sid):
+    return _bisect.reject_candidate(state, sid)
+
+
 def restore_all(state, sid):
     return _bisect.restore_all(state, sid)
 

@@ -25,7 +25,7 @@ It is the grown-up answer to "which of these 1,400 files is crashing my game."
 - **Load-order prediction** — parses `Resource.cfg` (`Priority` / `PackedFile`), applies the game's rules, and tells you **which mod wins** an override conflict and why, instead of just listing the losers.
 - **Script-mod analysis** — scans `.ts4script` archives for risky patterns (`os.system`, `exec`, network calls, Discord webhooks, `ctypes`, obfuscation).
 - **Crash-log reader** — parses `LastException`/crash logs and ranks your script mods by suspicion.
-- **50/50 bisect that actually works** — ModBroom physically moves half your suspect files out of Mods, you launch the game and say whether it still breaks, and it repeats until it names the one file. Automatic backup first; everything reversible.
+- **50/50 bisect that actually works** — ModBroom physically moves your riskiest suspects out of Mods first (crash-log matches, broken packages, risky scripts), then halves the pool with each answer until it names the one file. Folder groups stay together, any answer can be undone, and a candidate can be rejected if the problem persists. Automatic backup first; everything reversible.
 - **Quarantine** (reversible) and **permanent delete**.
 - **Backups** (zip of your Mods folder), **manifest export** (JSON), **CSV export**, and a **standalone HTML report** you can attach to a forum post or send to someone for help.
 - **Crash-proof paths**: OneDrive-redirected Documents, `.ts4script` nested too deep for the game to load, loose `.py` files the game ignores, `>259` char paths, dotfiles, zero-byte files, and the in-game checkboxes the game silently resets.

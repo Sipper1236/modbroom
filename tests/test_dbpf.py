@@ -86,6 +86,18 @@ def test_integrity_flags_missing_resources(tmp_path):
         dbpf.PackageReader(p)
 
 
+def test_real_style_header_uses_long_index_offset_at_0x40(tmp_path):
+    """Real Maxis packages leave the short offset at 0 and store it at 0x40."""
+    pkg = tmp_path / 'real_style.package'
+    pkg.write_bytes(_build_package([(0x015A1849, 0, 0xABCD, b'z' * 60)]))
+    data = pkg.read_bytes()
+    assert struct.unpack_from('<I', data, 40)[0] == 0
+    assert struct.unpack_from('<Q', data, 64)[0] > 0
+    reader = dbpf.PackageReader(pkg)
+    assert len(reader.entries) == 1
+    assert reader.resource_bytes(reader.entries[0]) == b'z' * 60
+
+
 def test_refpack_entry_decompresses(tmp_path):
     import zlib
     payload = b'print("hello sims")\n' * 50
@@ -140,7 +152,7 @@ def test_refpack_entry_roundtrip(tmp_path):
     struct.pack_into('<I', data, 36, 1)
     struct.pack_into('<I', data, 40, 0)
     struct.pack_into('<I', data, 44, len(index_bytes))
-    struct.pack_into('<Q', data, 68, index_offset)
+    struct.pack_into('<Q', data, 64, index_offset)
 
     pkg = tmp_path / 'refpack.package'
     pkg.write_bytes(bytes(data))

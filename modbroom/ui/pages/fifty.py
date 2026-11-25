@@ -14,8 +14,9 @@ class FiftyPage(Page):
     def __init__(self, window):
         super().__init__(window)
         self.header('50/50 Test',
-                    'ModBroom moves half your suspect mods out of the game, you launch Sims 4 and say whether it still breaks. '
-                    'Each answer halves the pile. A backup is taken first and everything is reversible.')
+                    'ModBroom moves suspects out of the game, you launch Sims 4 and say whether it still breaks. '
+                    'The first split puts the riskiest files out; every answer then halves the pile. '
+                    'A backup is taken first and every move is reversible.')
 
         self.banner = QLabel('')
         self.banner.setWordWrap(True)
@@ -106,9 +107,14 @@ class FiftyPage(Page):
         verdict_row.addStretch(1)
         ses.addLayout(verdict_row)
         abort_row = QHBoxLayout()
+        self.undo_btn = QPushButton('Undo last answer')
+        self.undo_btn.setObjectName('ghost')
+        self.undo_btn.setToolTip('Put the files back exactly as they were before your last answer')
+        self.undo_btn.clicked.connect(self._undo)
         self.abort_btn = QPushButton('Stop and put everything back')
         self.abort_btn.setObjectName('ghost')
         self.abort_btn.clicked.connect(self._abort)
+        abort_row.addWidget(self.undo_btn)
         abort_row.addWidget(self.abort_btn)
         abort_row.addStretch(1)
         ses.addLayout(abort_row)
@@ -126,18 +132,23 @@ class FiftyPage(Page):
         self.done_detail.setWordWrap(True)
         self.restore_all_btn = QPushButton('Put every file back')
         self.restore_all_btn.setObjectName('ghost')
+        self.reject_btn = QPushButton('Not this one — keep searching')
+        self.reject_btn.setObjectName('ghost')
+        self.reject_btn.setToolTip('The problem still happens without this file: put it back and search the rest')
         self.finish_btn = QPushButton('Keep the culprit out and finish')
         self.finish_btn.setObjectName('primary')
         done_l.addWidget(self.done_title)
         done_l.addWidget(self.done_detail)
         row2 = QHBoxLayout()
         row2.addWidget(self.finish_btn)
+        row2.addWidget(self.reject_btn)
         row2.addWidget(self.restore_all_btn)
         row2.addStretch(1)
         done_l.addLayout(row2)
         done_l.addStretch(1)
         self.body.addWidget(self.done_box, 1)
         self.restore_all_btn.clicked.connect(self._restore_all)
+        self.reject_btn.clicked.connect(self._reject)
         self.finish_btn.clicked.connect(self._finish)
 
         self._session_id = None
@@ -232,11 +243,21 @@ class FiftyPage(Page):
         self.done_box.hide()
         self.session_box.show()
         step = len(s.get('history', [])) + 1
-        self.step_lbl.setText('Step %d — half the suspects are out of the game' % step)
-        self.detail_lbl.setText(
-            'Launch The Sims 4 now and reproduce the problem. Then tell ModBroom which happened.\n'
-            'Still broken → the culprit is in the half still enabled. '
-            'Problem gone → it is in the half currently moved out.')
+        strategy = s.get('strategy')
+        if step == 1 and strategy == 'risk-first':
+            self.step_lbl.setText('Step 1 — the riskiest suspects are out of the game')
+            self.detail_lbl.setText(
+                'ModBroom moved out the files your last scan flagged most (crash-log matches, broken packages, '
+                'risky scripts) and kept related files together. Launch The Sims 4 and reproduce the problem.\n'
+                'Still broken → the culprit is in the enabled group. '
+                'Problem gone → it is in the group currently moved out.')
+        else:
+            self.step_lbl.setText('Step %d — half the suspects are out of the game' % step)
+            self.detail_lbl.setText(
+                'Launch The Sims 4 now and reproduce the problem. Then tell ModBroom which happened.\n'
+                'Still broken → the culprit is in the half still enabled. '
+                'Problem gone → it is in the half currently moved out.')
+        self.undo_btn.setEnabled(bool(s.get('history')))
         self.enabled_list.clear()
         for rel in s.get('enabled', []):
             self.enabled_list.addItem(rel)
@@ -251,11 +272,15 @@ class FiftyPage(Page):
         self.session_box.hide()
         self.done_box.show()
         culprit = s.get('culprit')
+        self.reject_btn.setVisible(bool(culprit) and not s.get('candidate_confirmed'))
         if culprit:
-            self.done_title.setText('Found it: %s' % Path(culprit).name)
+            self.done_title.setText('Likely culprit: %s' % Path(culprit).name)
+            extra = '' if s.get('candidate_confirmed') else (
+                'If the problem still happens with this file out, click “Not this one — keep searching”.')
             self.done_detail.setText(
                 'Path: %s\n\nIt has been moved out of your Mods folder. '
-                'Everything else is back where it belongs. Delete it, update it, or report it to its author.' % culprit)
+                'Everything else is back where it belongs. Delete it, update it, or report it to its author.\n\n%s'
+                % (culprit, extra))
         else:
             self.done_title.setText('No single culprit')
             self.done_detail.setText('The bisect ended without isolating one file. Restore everything and try a wider net.')
@@ -273,8 +298,8 @@ class FiftyPage(Page):
             return
         ok = QMessageBox.question(
             self, 'Start 50/50',
-            'ModBroom will move %d file(s) out of your Mods folder right now.\n\n'
-            'A full backup is taken first, and every move is reversible. Continue?' % (len(paths) // 2))
+            'ModBroom will move some of the %d selected file(s) out of your Mods folder right now.\n\n'
+            'A full backup is taken first, and every move is reversible. Continue?' % len(paths))
         if ok != QMessageBox.Yes:
             return
         try:
@@ -289,6 +314,28 @@ class FiftyPage(Page):
             bisect_bridge.verdict(self.state, self._session_id, result)
         except Exception as exc:
             QMessageBox.critical(self, '50/50 failed', str(exc))
+            return
+        self.window.refresh_all()
+
+    def _undo(self):
+        try:
+            bisect_bridge.undo_verdict(self.state, self._session_id)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Could not undo', str(exc))
+            return
+        self.window.refresh_all()
+
+    def _reject(self):
+        ok = QMessageBox.question(
+            self, 'Keep searching',
+            'Put this file back and test the remaining files without it?\n\n'
+            'Use this if the problem still happens with the candidate out of the game.')
+        if ok != QMessageBox.Yes:
+            return
+        try:
+            bisect_bridge.reject_candidate(self.state, self._session_id)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Could not continue', str(exc))
             return
         self.window.refresh_all()
 

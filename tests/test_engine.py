@@ -1,4 +1,5 @@
 import os, sys, json, shutil, re, zipfile
+from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
@@ -71,6 +72,45 @@ def test_quarantine_and_restore_roundtrip(mods, tmp_path):
     qid = state['quarantine'][0]['id']
     store.restore_quarantine(state, [qid])
     assert victim.exists() and victim.read_bytes() == original
+
+
+def test_risk_first_split_moves_high_risk_files_out():
+    pool = ['f%02d.package' % i for i in range(10)]
+    scores = {pool[0]: 12, pool[1]: 9}
+    enabled, disabled = bisect.plan(pool, scores, risk_first=True)
+    assert pool[0] in disabled and pool[1] in disabled
+    assert len(disabled) <= len(pool) // 2
+    assert enabled and set(enabled).isdisjoint(disabled)
+
+
+def test_bisect_undo_restores_previous_split(mods):
+    state = store.load_state()
+    files = [str(p) for p in sorted(mods.iterdir()) if p.is_file()]
+    s = bisect.start(state, files, str(mods))
+    before = (list(s['pool']), list(s['enabled']), list(s['disabled']))
+    s = bisect.verdict(state, s['id'], 'broken')
+    assert list(s['pool']) != before[0]
+    s = bisect.undo_verdict(state, s['id'])
+    assert s['status'] == 'active'
+    assert (list(s['pool']), list(s['enabled']), list(s['disabled'])) == before
+
+
+def test_bisect_reject_candidate_continues_search(mods):
+    state = store.load_state()
+    files = [str(p) for p in sorted(mods.iterdir()) if p.is_file()]
+    s = bisect.start(state, files, str(mods))
+    culprit = files[0]
+    guard = 0
+    while s['status'] == 'active' and guard < 12:
+        result = 'broken' if culprit in s['enabled'] else 'fixed'
+        s = bisect.verdict(state, s['id'], result)
+        guard += 1
+    assert s['status'] == 'done'
+    assert s['culprit'] is not None
+    s = bisect.reject_candidate(state, s['id'])
+    assert s['status'] == 'active'
+    assert culprit not in s['pool']
+    assert (mods / Path(culprit).name).exists()
 
 
 def test_bisect_finds_culprit(mods, tmp_path):

@@ -70,13 +70,84 @@ def active_sessions(state):
     return [s for s in _load(state).values() if s.get('status') == 'active']
 
 
-def plan(pool):
-    """Split a suspect pool into (enabled, disabled). Larger half stays in."""
+def risk_scores(state):
+    """Score suspect paths from the last scan.
+
+    Higher score = more likely to be the culprit. Used to make the *first*
+    split informed instead of alphabetical: the highest-risk group is moved
+    out, so a "problem gone" answer immediately narrows to a small pool.
+    """
+    scores = {}
+
+    def bump(paths, amount):
+        for p in paths or []:
+            if p:
+                scores[p] = scores.get(p, 0) + amount
+
+    f = state.get('last_findings') or {}
+    bump([i.get('file') for i in f.get('integrity', [])], 8)
+    bump([i.get('file') for i in f.get('parse_errors', [])], 8)
+    bump([i.get('file') for i in f.get('script_risks', []) if i.get('level') == 'high'], 4)
+    bump([i.get('file') for i in f.get('script_risks', []) if i.get('level') == 'medium'], 2)
+    for d in f.get('duplicates', []):
+        bump((d.get('files') or [])[1:], 1)
+    for d in f.get('resource_dupes', []):
+        bump((d.get('files') or [])[1:], 1)
+    for c in f.get('conflicts', []):
+        bump(c.get('files', []), 1)
+    crash = state.get('last_crashlogs') or {}
+    bump([s.get('file') for s in crash.get('suspects', [])], 10)
+    return scores
+
+
+def _ordered_groups(pool, scores):
+    """Group files by folder so a mod and its companion files stay together."""
+    groups = {}
+    for rel in pool:
+        parent = str(Path(rel).parent).replace('\\', '/').lower() or '.'
+        groups.setdefault(parent, []).append(rel)
+    ranked = sorted(
+        groups.items(),
+        key=lambda kv: (-max(scores.get(r, 0) for r in kv[1]), kv[0]),
+    )
+    return [(key, sorted(rs, key=lambda r: (-scores.get(r, 0), r.lower())))
+            for key, rs in ranked]
+
+
+def plan(pool, scores=None, risk_first=False):
+    """Split a suspect pool into (enabled, disabled).
+
+    With `risk_first`, the highest-risk ~30% is moved out (never more than
+    half), keeping small folder groups intact. Every later round is a plain
+    risk-ordered half split.
+    """
     pool = list(pool)
     if len(pool) <= 1:
-        return list(pool), []
-    half = (len(pool) + 1) // 2
-    return pool[:half], pool[half:]
+        return pool, []
+    scores = scores or {}
+    ordered = sorted(pool, key=lambda r: (-scores.get(r, 0), r.lower()))
+    if not risk_first:
+        half = (len(ordered) + 1) // 2
+        return ordered[:half], ordered[half:]
+
+    target = max(1, min(len(pool) // 2, (len(pool) * 30 + 99) // 100))
+    max_group = max(1, len(pool) // 4)
+    disabled = []
+    for _key, group in _ordered_groups(pool, scores):
+        if len(disabled) >= target:
+            break
+        take = min(len(group), max_group, target - len(disabled))
+        if take == len(group) and len(group) <= max_group:
+            disabled.extend(group)
+        else:
+            disabled.extend(group[:take])
+    if not disabled:
+        disabled = ordered[:target]
+    if len(disabled) >= len(pool):
+        disabled = ordered[:len(pool) - 1]
+    out = set(disabled)
+    enabled = [r for r in ordered if r not in out]
+    return enabled, disabled
 
 
 def start(state, files, mods_root):
@@ -101,7 +172,9 @@ def start(state, files, mods_root):
     backup = store.create_backup(state, mods_root, 'pre-bisect')
 
     sid = uuid.uuid4().hex[:12]
-    enabled, disabled = plan(rels)
+    scores = risk_scores(state)
+    risk_first = bool(scores)
+    enabled, disabled = plan(rels, scores, risk_first=risk_first)
     session = {
         'id': sid,
         'created': time.time(),
@@ -114,6 +187,9 @@ def start(state, files, mods_root):
         'history': [],
         'status': 'active',
         'culprit': None,
+        'scores': scores,
+        'strategy': 'risk-first' if risk_first else 'balanced',
+        'rejected': [],
     }
     _session_dir(sid).mkdir(parents=True, exist_ok=True)
     desired = {rel: 'in' for rel in enabled}
@@ -143,6 +219,7 @@ def verdict(state, sid, result):
         culprit_half, cleared = disabled, enabled
 
     s['history'].append({'step': len(s['history']) + 1, 'result': result,
+                         'pool_before': list(s['pool']),
                          'enabled': list(enabled), 'disabled': list(disabled),
                          'pool_after': list(culprit_half)})
 
@@ -151,6 +228,7 @@ def verdict(state, sid, result):
         s['enabled'] = list(culprit_half)
         s['disabled'] = []
         s['culprit'] = culprit_half[0] if culprit_half else None
+        s['candidate_confirmed'] = False
         s['status'] = 'done'
         desired = {rel: 'in' for rel in cleared}
         desired.update({rel: 'in' for rel in s['pool']})
@@ -162,7 +240,7 @@ def verdict(state, sid, result):
         return s
 
     new_pool = culprit_half
-    new_enabled, new_disabled = plan(new_pool)
+    new_enabled, new_disabled = plan(new_pool, s.get('scores'))
     desired = {}
     for rel in cleared:
         desired[rel] = 'in'
@@ -173,6 +251,62 @@ def verdict(state, sid, result):
     s['pool'] = list(new_pool)
     s['enabled'] = list(new_enabled)
     s['disabled'] = list(new_disabled)
+    s['moved'] = _apply(s, desired)
+    sessions[sid] = s
+    _save(state, sessions)
+    return s
+
+
+def undo_verdict(state, sid):
+    """Take back the last answer and restore the previous split.
+
+    Useful when a test run was inconclusive or the wrong button was clicked.
+    """
+    sessions = _load(state)
+    s = sessions.get(sid)
+    if not s:
+        raise BisectError('No such 50/50 session.')
+    history = s.get('history') or []
+    if not history:
+        raise BisectError('There is no answer to undo yet.')
+    step = history.pop()
+    pool_before = step.get('pool_before') or (list(step.get('enabled') or []) + list(step.get('disabled') or []))
+    s['pool'] = list(pool_before)
+    s['enabled'] = list(step.get('enabled') or [])
+    s['disabled'] = list(step.get('disabled') or [])
+    s['status'] = 'active'
+    s['culprit'] = None
+    s['candidate_confirmed'] = False
+    desired = {rel: 'in' for rel in s.get('members', [])}
+    desired.update({rel: 'out' for rel in s['disabled']})
+    s['moved'] = _apply(s, desired)
+    sessions[sid] = s
+    _save(state, sessions)
+    return s
+
+
+def reject_candidate(state, sid):
+    """The single remaining file is not the culprit — keep searching without it."""
+    sessions = _load(state)
+    s = sessions.get(sid)
+    if not s:
+        raise BisectError('No such 50/50 session.')
+    culprit = s.get('culprit')
+    if not culprit:
+        raise BisectError('There is no candidate to reject.')
+    remaining = [rel for rel in s.get('members', []) if rel != culprit]
+    if len(remaining) < 2:
+        raise BisectError('No files left to test — restore everything instead.')
+    s.setdefault('rejected', []).append(culprit)
+    enabled, disabled = plan(remaining, s.get('scores'))
+    s['pool'] = remaining
+    s['enabled'] = enabled
+    s['disabled'] = disabled
+    s['culprit'] = None
+    s['candidate_confirmed'] = False
+    s['status'] = 'active'
+    desired = {rel: 'in' for rel in s.get('members', [])}
+    desired.update({rel: 'out' for rel in disabled})
     s['moved'] = _apply(s, desired)
     sessions[sid] = s
     _save(state, sessions)
@@ -226,6 +360,7 @@ def finish(state, sid):
                 'size': dest.stat().st_size,
             })
     s['status'] = 'done'
+    s['candidate_confirmed'] = True
     sessions[sid] = s
     _save(state, sessions)
     return s
