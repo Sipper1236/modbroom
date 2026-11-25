@@ -87,6 +87,7 @@ class PackageReader:
         self.minor = 0
         self._size = 0
         self.integrity_notes = []
+        self._index_count = 0
         self._read_header_and_index()
 
     def _read_header_and_index(self):
@@ -102,6 +103,7 @@ class PackageReader:
             index_size = struct.unpack_from("<I", header, 44)[0]
             long_index_offset = struct.unpack_from("<Q", header, 68)[0]
             index_offset = long_index_offset if long_index_offset else index_offset_short
+            self._index_count = index_count
             if index_offset == 0:
                 raise PackageError("No index offset present")
             fh.seek(0, 2)
@@ -168,13 +170,23 @@ class PackageReader:
             ))
 
     def integrity_errors(self):
-        """Entries that point outside the file."""
+        """Entries that point outside the file.
+
+        Deleted/tombstone records legitimately carry sentinel offsets and
+        sizes (0xFFFFFFFF / 0x7FFFFFFF). Tools such as s4pe and Sims 4 Studio
+        leave them in packages that load perfectly in the game, so they must
+        not be reported as truncated downloads.
+        """
         errors = list(getattr(self, 'integrity_notes', []))
         for e in self.entries:
+            if e.compression in (COMP_DELETED, COMP_INTERNAL):
+                continue
+            if e.offset in (0xFFFFFFFF, 0xFFFF) or e.compressed_size in (0xFFFFFFFF, 0x7FFFFFFF):
+                continue
             if e.offset + e.compressed_size > self._size:
                 errors.append("Resource 0x%016X extends past end of file (truncated download?)" % e.instance_id)
-        if not self.entries:
-            errors.append("No resources in index — file may be corrupt")
+        if not self.entries and self._index_count:
+            errors.append("Index declares %d entries but none could be parsed" % self._index_count)
         return errors
 
     def resource_bytes(self, entry):

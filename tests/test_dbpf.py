@@ -39,6 +39,37 @@ def test_truncated_file_raises(tmp_path):
         dbpf.PackageReader(bad)
 
 
+def test_deleted_tombstone_is_not_reported_as_broken(tmp_path):
+    """s4pe/S4S leave tombstone records with sentinel offsets in valid packages."""
+    pkg = tmp_path / 'tombstone.package'
+    pkg.write_bytes(_build_package([(0x015A1849, 0, 1, b'x' * 50)]))
+    reader = dbpf.PackageReader(pkg)
+    reader.entries.append(dbpf.ResourceEntry(
+        type_id=0, group_id=0, instance_hi=0, instance_lo=0xDEAD,
+        offset=0xFFFFFFFF, compressed_size=0x7FFFFFFF,
+        uncompressed_size=0, compression=dbpf.COMP_DELETED))
+    assert reader.integrity_errors() == []
+
+
+def test_sentinel_offset_without_compression_flag_is_not_broken(tmp_path):
+    pkg = tmp_path / 'sentinel.package'
+    pkg.write_bytes(_build_package([(0x015A1849, 0, 1, b'x' * 50)]))
+    reader = dbpf.PackageReader(pkg)
+    reader.entries.append(dbpf.ResourceEntry(
+        type_id=0, group_id=0, instance_hi=0, instance_lo=0xBEEF,
+        offset=0xFFFFFFFF, compressed_size=0,
+        uncompressed_size=0, compression=dbpf.COMP_UNCOMPRESSED))
+    assert reader.integrity_errors() == []
+
+
+def test_empty_index_is_not_broken(tmp_path):
+    pkg = tmp_path / 'empty.package'
+    pkg.write_bytes(_build_package([]))
+    reader = dbpf.PackageReader(pkg)
+    assert reader.entries == []
+    assert reader.integrity_errors() == []
+
+
 def test_not_a_package(tmp_path):
     p = tmp_path / 'notapkg.package'
     p.write_bytes(b'NOPE' + b'\x00' * 200)

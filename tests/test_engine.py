@@ -1,8 +1,25 @@
-import os, sys, json, shutil
+import os, sys, json, shutil, re, zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
 from modbroom import scanner, store, bisect, crashlog, demo
+
+
+def test_version_string_is_not_flagged_as_ip():
+    pattern = r'\b\d{1,3}(?:\.\d{1,3}){3}\b(?!\.\d)'
+    version = re.search(pattern, 'version = "7.18.178.178"')
+    assert version is not None
+    assert not scanner._looks_like_ip(version)
+    real = re.search(pattern, 'host = "185.199.108.153"')
+    assert scanner._looks_like_ip(real)
+
+
+def test_script_version_string_does_not_create_risk_finding(tmp_path):
+    script = tmp_path / 'legit.ts4script'
+    with zipfile.ZipFile(script, 'w') as zf:
+        zf.writestr('mod.py', 'VERSION = "7.18.178.178"\n')
+    msgs = [f['msg'] for f in scanner.scan_script_zip(script)]
+    assert 'IP-like address' not in msgs
 
 
 @pytest.fixture()

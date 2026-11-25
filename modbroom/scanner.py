@@ -8,7 +8,20 @@ SCRIPT_EXTS = {'.ts4script'}
 PACKAGE_EXTS = {'.package'}
 SAVE_EXTS = {'.save', '.ver'}
 
+def _looks_like_ip(match):
+    """Reject version strings such as 7.18.178.178 that look like an IPv4."""
+    parts = match.group(0).split('.')
+    if len(parts) != 4:
+        return False
+    try:
+        octets = [int(p) for p in parts]
+    except ValueError:
+        return False
+    return all(0 <= o <= 255 for o in octets) and octets[0] >= 10
+
+
 # Risky patterns in python script mods
+# Each entry is (regex, label, level, optional validator).
 RISKY_PATTERNS = [
     (r'\bos\.system\s*\(', 'os.system call', 'high'),
     (r'\bsubprocess\b', 'subprocess usage', 'medium'),
@@ -24,7 +37,7 @@ RISKY_PATTERNS = [
     (r'\bpickle\.loads?\b', 'pickle deserialization', 'medium'),
     (r'\bshutil\.rmtree\b', 'recursive delete', 'high'),
     (r'\bopen\s*\([^)]*["\']w["\']', 'file write access', 'low'),
-    (r'\b(?:\d{1,3}\.){3}\d{1,3}\b', 'raw IP address', 'medium'),
+    (r'\b\d{1,3}(?:\.\d{1,3}){3}\b(?!\.\d)', 'IP-like address', 'low', _looks_like_ip),
 ]
 
 def sha256_file(path, limit=None):
@@ -53,10 +66,15 @@ def scan_script_zip(path):
                     continue
                 blob += data + b'\n'
             text = blob.decode('latin-1', errors='ignore')
-            for pat, label, level in RISKY_PATTERNS:
+            for pattern in RISKY_PATTERNS:
+                pat, label, level = pattern[:3]
                 m = re.search(pat, text, re.I)
-                if m:
-                    findings.append({'level': level, 'msg': label, 'detail': m.group(0)[:120]})
+                if not m:
+                    continue
+                validator = pattern[3] if len(pattern) > 3 else None
+                if validator is not None and not validator(m):
+                    continue
+                findings.append({'level': level, 'msg': label, 'detail': m.group(0)[:120]})
     except zipfile.BadZipFile:
         findings.append({'level': 'high', 'msg': 'Corrupt script archive (not a valid zip)', 'detail': 'BadZipFile'})
     except Exception as e:
