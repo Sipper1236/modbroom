@@ -45,9 +45,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\empty_mods" | Out-Null
-          & dist\ModBroom.exe --cli-scan "$env:RUNNER_TEMP\empty_mods" ; $code = $LASTEXITCODE
-          Write-Host "exit=$code"
-          if ($code -gt 1) { throw "exe crashed running --cli-scan (exit $code)" }
+          $out = & dist\ModBroom.exe --cli-scan "$env:RUNNER_TEMP\empty_mods" 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch 'Scanned') { throw 'exe did not produce scan output' }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
