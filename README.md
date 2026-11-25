@@ -1,18 +1,23 @@
 # ModBroom
 
+[![Windows build](https://github.com/Sipper1236/modbroom/actions/workflows/windows.yml/badge.svg)](https://github.com/Sipper1236/modbroom/actions/workflows/windows.yml)
+[![Tests](https://github.com/Sipper1236/modbroom/actions/workflows/windows.yml/badge.svg)](https://github.com/Sipper1236/modbroom/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A free, local desktop app for **The Sims 4** that finds broken, duplicate, conflicting and risky mods — no account, no subscription, no network calls, and nothing leaves your machine.
 
 It is the grown-up answer to "which of these 1,400 files is crashing my game."
 
 ## What it does
 
-- **Real DBPF parsing** — reads the actual binary `.package` format (header, index, zlib resources). Not filename guessing.
+- **Real DBPF parsing** — reads the actual binary `.package` format (header, index, zlib **and EA RefPack** resources). Not filename guessing.
 - **Diagnostics** — conflicts (same resource ID in multiple packages), duplicates (byte-identical and identical-resource-set), truncated/corrupt packages, unreadable files.
+- **Load-order prediction** — parses `Resource.cfg` (`Priority` / `PackedFile`), applies the game's rules, and tells you **which mod wins** an override conflict and why, instead of just listing the losers.
 - **Script-mod analysis** — scans `.ts4script` archives for risky patterns (`os.system`, `exec`, network calls, Discord webhooks, `ctypes`, obfuscation).
 - **Crash-log reader** — parses `LastException`/crash logs and ranks your script mods by suspicion.
 - **50/50 bisect that actually works** — ModBroom physically moves half your suspect files out of Mods, you launch the game and say whether it still breaks, and it repeats until it names the one file. Automatic backup first; everything reversible.
 - **Quarantine** (reversible) and **permanent delete**.
-- **Backups** (zip of your Mods folder), **manifest export** (JSON), **CSV export**.
+- **Backups** (zip of your Mods folder), **manifest export** (JSON), **CSV export**, and a **standalone HTML report** you can attach to a forum post or send to someone for help.
 - **Crash-proof paths**: OneDrive-redirected Documents, `.ts4script` nested too deep for the game to load, loose `.py` files the game ignores, `>259` char paths, dotfiles, zero-byte files, and the in-game checkboxes the game silently resets.
 - **In-game companion** (optional): a real script mod (`ModBroomBridge.ts4script`) that adds `mb_status`, `mb_stats`, `mb_find`, `mb_help` cheat commands so you can ask the game about your Mods folder.
 - **Demo library** if you have no game here — one click builds a synthetic Mods folder with every failure mode represented.
@@ -32,13 +37,16 @@ pip install -r requirements.txt
 ./run.sh
 ```
 
-**Build a single-file Windows .exe**
+**Download the Windows exe**
+
+Every push builds `dist/ModBroom.exe` on GitHub Actions and attaches it to tagged releases — grab it from the [Releases](https://github.com/Sipper1236/modbroom/releases) page. It needs no Python install.
+
+Or build it yourself:
 
 ```
 pip install pyinstaller PySide6-Essentials
 pyinstaller modbroom.spec
 ```
-`dist/ModBroom.exe` needs no Python install. (Built and smoke-tested on Linux; the Windows exe is produced by the same `modbroom.spec` on a Windows machine.)
 
 ## First run
 
@@ -68,7 +76,9 @@ Every step is reversible from **Tools → Quarantine**; a pre-bisect backup is a
 
 ```
 modbroom/
-  dbpf.py         DBPF parser (header / index / zlib resources)
+  dbpf.py         DBPF parser (header / index / zlib + RefPack resources)
+  refpack.py      EA RefPack decompressor (FB10) — implemented from the public spec
+  loadorder.py    Resource.cfg parser + conflict-winner prediction
   scanner.py      walk Mods, duplicates, conflicts, integrity, script risk, usage
   game_rules.py   Sims-4-specific loading rules (depth, OneDrive, path length…)
   crashlog.py     crash-log parsing + suspect ranking
@@ -80,6 +90,21 @@ modbroom/
   cli.py          headless scan (python -m modbroom --cli-scan)
   ui/             PySide6 app (theme, pages, widgets)
 ```
+
+## How it compares
+
+See [COMPARISON.md](COMPARISON.md) for a feature-by-feature comparison against the open-source tools people actually use for this (simscan and others), and where ModBroom deliberately differs.
+
+## Running the tests
+
+```
+pip install pytest
+python -m pytest tests -q
+```
+
+38 tests cover the DBPF parser, the RefPack codec (round-trip + corruption handling), `Resource.cfg` load order and conflict-winner prediction, the bisect engine, quarantine/restore, crash-log ranking, and the HTML report.
+
+CI runs the same suite on Ubuntu, then builds the Windows exe on `windows-latest` and smoke-tests it before uploading the artifact.
 
 ## Honest limits
 
