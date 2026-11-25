@@ -54,9 +54,11 @@ benchmarks we ran on other people's machines. Where ModBroom does not do somethi
 
 ## Honest status
 
-- The Windows `.exe` is built by CI on `windows-latest` and smoke-tested headlessly
-  (`--cli-scan` on an empty folder). It has not been run interactively on a real Windows
-  desktop with a real Sims 4 install in this session.
+- The Windows `.exe` is built by CI on `windows-latest`. CI verifies the exe exists and is
+  non-trivial in size, that every UI module imports cleanly under the offscreen Qt platform, and
+  that `--cli-scan` against a generated demo Mods folder reports the expected defect counts. It
+  has **not** been run interactively on a real Windows desktop, and it has **not** been run
+  against a real Sims 4 install anywhere.
 - The companion mod is API-conformant but has never been executed inside the game.
 - RefPack decompression is validated by round-trip tests against an independent encoder
   written for this test-suite, plus spec-derived vectors. It has not been fuzzed against a
