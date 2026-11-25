@@ -188,6 +188,12 @@ def main():
     app.setOrganizationName('ModBroom')
     app.setWindowIcon(app_icon())
     theme.apply(app)
+    # remove the leftover .old.exe from a previous self-update
+    try:
+        from .. import updater
+        updater.run_pending_cleanup()
+    except Exception:
+        pass
     win = MainWindow()
     win.show()
     return app.exec()

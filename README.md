@@ -21,6 +21,7 @@ It is the grown-up answer to "which of these 1,400 files is crashing my game."
 - **Crash-proof paths**: OneDrive-redirected Documents, `.ts4script` nested too deep for the game to load, loose `.py` files the game ignores, `>259` char paths, dotfiles, zero-byte files, and the in-game checkboxes the game silently resets.
 - **In-game companion** (optional): a real script mod (`ModBroomBridge.ts4script`) that adds `mb_status`, `mb_stats`, `mb_find`, `mb_help` cheat commands so you can ask the game about your Mods folder.
 - **Demo library** if you have no game here — one click builds a synthetic Mods folder with every failure mode represented.
+- **Self-updater** — in the packaged Windows exe, **Settings → Updates** checks GitHub Releases, shows the notes and installs the new exe with your confirmation, keeping a rollback copy until next launch.
 
 ## Run it
 
@@ -36,6 +37,18 @@ It is the grown-up answer to "which of these 1,400 files is crashing my game."
 pip install -r requirements.txt
 ./run.sh
 ```
+
+## Auto-updates
+
+If you installed the packaged Windows exe, open **Settings → Updates → Check for updates**.
+ModBroom checks the GitHub Releases API, tells you what changed, and only downloads or
+replaces anything after you click **Download and install**. On Windows the running exe is
+renamed rather than deleted (Windows will not let a running exe be overwritten); the new one
+takes its name and the old one is cleaned up at the next launch. No telemetry — the only
+network call is the release check itself.
+
+Running from source (`python run.py`) there is no binary to replace, so the button explains
+that and points you at the releases page.
 
 **Download the Windows exe**
 
