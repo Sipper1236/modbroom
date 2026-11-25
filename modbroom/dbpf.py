@@ -192,17 +192,18 @@ class PackageReader:
                     except zlib.error:
                         continue
                 raise PackageError("zlib decompression failed for 0x%016X" % entry.instance_id)
-        if entry.compression in (COMP_UNCOMPRESSED, COMP_INTERNAL):
-            return raw
         if entry.compression == COMP_DELETED:
             return b""
-        # RefPack stream: explicitly tagged, or a raw EA RefPack payload the game
-        # stored unflagged. Fail loudly rather than hand back compressed bytes.
+        # RefPack stream: explicitly tagged, or an EA RefPack payload the game
+        # stored unflagged. Signature wins over the compression flag. Fail loudly
+        # rather than hand compressed bytes back to the caller.
         if entry.compression == COMP_REFPACK or raw[:2] == b"\x10\xFB":
             try:
                 return _refpack_decompress(raw, entry.uncompressed_size)
             except RefPackError as exc:
                 raise PackageError("RefPack decompression failed for 0x%016X: %s" % (entry.instance_id, exc))
+        if entry.compression in (COMP_UNCOMPRESSED, COMP_INTERNAL):
+            return raw
         return raw
 
     def tgi_set(self):
