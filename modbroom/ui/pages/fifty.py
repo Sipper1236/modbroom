@@ -1,13 +1,48 @@
 """50/50 bisect: let ModBroom move the files; you just tell it how the game behaved."""
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QListWidget, QListWidgetItem, QCheckBox, QFrame,
                                QMessageBox, QScrollArea, QAbstractItemView)
 
 from . import Page
 from .. import bisect_bridge  # thin shim so UI never imports engine directly for state mutation
+from ... import log as mblog
+
+log = mblog.get_logger('ui.bisect')
+
+
+class BisectWorker(QObject):
+    """Run a bisect engine call off the UI thread and report progress."""
+
+    done = Signal(object)
+    failed = Signal(str)
+    progress = Signal(str)
+
+    def __init__(self, fn, args, state):
+        super().__init__()
+        self._fn, self._args, self._state = fn, args, state
+
+    @Slot()
+    def run(self):
+        try:
+            result = self._fn(self._state, *self._args,
+                              progress=lambda msg: self.progress.emit(msg))
+            self.done.emit(result)
+        except Exception as exc:
+            log.exception('bisect worker failed: %s', exc)
+            self.failed.emit(str(exc))
+
+
+def _restore_and_forget(state, sid, progress=None):
+    bisect_bridge.restore_all(state, sid, progress=progress)
+    bisect_bridge.forget(state, sid)
+
+
+def _finish_and_forget(state, sid, progress=None):
+    bisect_bridge.finish(state, sid, progress=progress)
+    bisect_bridge.forget(state, sid)
 
 
 class FiftyPage(Page):
@@ -15,8 +50,8 @@ class FiftyPage(Page):
         super().__init__(window)
         self.header('50/50 Test',
                     'ModBroom moves suspects out of the game, you launch Sims 4 and say whether it still breaks. '
-                    'The first split puts the riskiest files out; every answer then halves the pile. '
-                    'A backup is taken first and every move is reversible.')
+                    'Splits are risk-balanced so each game launch eliminates as many files as possible. '
+                    'Backups and file moves run in the background; everything is reversible.')
 
         self.banner = QLabel('')
         self.banner.setWordWrap(True)
@@ -152,6 +187,63 @@ class FiftyPage(Page):
         self.finish_btn.clicked.connect(self._finish)
 
         self._session_id = None
+        self._busy = False
+        self._busy_label = ''
+        self._thread = None
+        self._worker = None
+
+    # ------------------------------------------------ async engine calls
+    def _set_busy(self, busy):
+        self._busy = busy
+        for btn in (self.start_btn, self.suggest_btn, self.broken_btn, self.fixed_btn,
+                    self.undo_btn, self.abort_btn, self.reject_btn, self.finish_btn,
+                    self.restore_all_btn):
+            btn.setEnabled(not busy)
+
+    def _run_bisect(self, fn, label, *args):
+        """Run engine work in a worker thread so the UI never freezes."""
+        if self._busy:
+            return
+        self._busy_label = label
+        self._set_busy(True)
+        self.banner.setText('%s — starting…' % label)
+        thread = QThread(self)
+        worker = BisectWorker(fn, args, self.state)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_bisect_progress)
+        worker.done.connect(self._on_bisect_done)
+        worker.failed.connect(self._on_bisect_failed)
+        self._thread, self._worker = thread, worker
+        thread.start()
+
+    def _release_thread(self):
+        thread, worker = self._thread, self._worker
+        self._thread = self._worker = None
+        if thread:
+            thread.quit()
+            thread.wait(3000)
+        if worker:
+            worker.deleteLater()
+        if thread:
+            thread.deleteLater()
+
+    @Slot(str)
+    def _on_bisect_progress(self, msg):
+        self.banner.setText('%s — %s' % (self._busy_label, msg))
+
+    @Slot(object)
+    def _on_bisect_done(self, session):
+        self._release_thread()
+        self._set_busy(False)
+        self.window.refresh_all()
+
+    @Slot(str)
+    def _on_bisect_failed(self, msg):
+        self._release_thread()
+        self._set_busy(False)
+        QMessageBox.critical(self, '50/50 failed', msg)
+        self.window.refresh_all()
 
     # ------------------------------------------------ helpers
     def _suspect_paths(self):
@@ -243,20 +335,23 @@ class FiftyPage(Page):
         self.done_box.hide()
         self.session_box.show()
         step = len(s.get('history', [])) + 1
+        pool_n = max(0, len(s.get('pool', [])))
+        rounds = (pool_n - 1).bit_length()   # ceil(log2(n)): tests left with ideal splits
+        estimate = ('about %d more game test(s)' % rounds) if rounds else 'one final check'
         strategy = s.get('strategy')
-        if step == 1 and strategy == 'risk-first':
-            self.step_lbl.setText('Step 1 — the riskiest suspects are out of the game')
+        if step == 1 and strategy == 'risk-balanced':
+            self.step_lbl.setText('Step 1 — %d suspects left, %s' % (pool_n, estimate))
             self.detail_lbl.setText(
-                'ModBroom moved out the files your last scan flagged most (crash-log matches, broken packages, '
-                'risky scripts) and kept related files together. Launch The Sims 4 and reproduce the problem.\n'
+                'The files most likely to be responsible were moved out first, with related files kept together. '
+                'Launch The Sims 4 and reproduce the problem.\n'
                 'Still broken → the culprit is in the enabled group. '
                 'Problem gone → it is in the group currently moved out.')
         else:
-            self.step_lbl.setText('Step %d — half the suspects are out of the game' % step)
+            self.step_lbl.setText('Step %d — %d suspects left, %s' % (step, pool_n, estimate))
             self.detail_lbl.setText(
                 'Launch The Sims 4 now and reproduce the problem. Then tell ModBroom which happened.\n'
-                'Still broken → the culprit is in the half still enabled. '
-                'Problem gone → it is in the half currently moved out.')
+                'Still broken → the culprit is in the group still enabled. '
+                'Problem gone → it is in the group currently moved out.')
         self.undo_btn.setEnabled(bool(s.get('history')))
         self.enabled_list.clear()
         for rel in s.get('enabled', []):
@@ -302,28 +397,13 @@ class FiftyPage(Page):
             'A full backup is taken first, and every move is reversible. Continue?' % len(paths))
         if ok != QMessageBox.Yes:
             return
-        try:
-            bisect_bridge.start(self.state, paths, mods)
-        except Exception as exc:
-            QMessageBox.critical(self, 'Could not start', str(exc))
-            return
-        self.window.refresh_all()
+        self._run_bisect(bisect_bridge.start, 'Starting 50/50', paths, mods)
 
     def _verdict(self, result):
-        try:
-            bisect_bridge.verdict(self.state, self._session_id, result)
-        except Exception as exc:
-            QMessageBox.critical(self, '50/50 failed', str(exc))
-            return
-        self.window.refresh_all()
+        self._run_bisect(bisect_bridge.verdict, 'Applying answer', self._session_id, result)
 
     def _undo(self):
-        try:
-            bisect_bridge.undo_verdict(self.state, self._session_id)
-        except Exception as exc:
-            QMessageBox.critical(self, 'Could not undo', str(exc))
-            return
-        self.window.refresh_all()
+        self._run_bisect(bisect_bridge.undo_verdict, 'Undoing last answer', self._session_id)
 
     def _reject(self):
         ok = QMessageBox.question(
@@ -332,27 +412,17 @@ class FiftyPage(Page):
             'Use this if the problem still happens with the candidate out of the game.')
         if ok != QMessageBox.Yes:
             return
-        try:
-            bisect_bridge.reject_candidate(self.state, self._session_id)
-        except Exception as exc:
-            QMessageBox.critical(self, 'Could not continue', str(exc))
-            return
-        self.window.refresh_all()
+        self._run_bisect(bisect_bridge.reject_candidate, 'Continuing search', self._session_id)
 
     def _abort(self):
         ok = QMessageBox.question(self, 'Stop 50/50',
                                   'Move every file back where it was and discard this session?')
         if ok != QMessageBox.Yes:
             return
-        bisect_bridge.restore_all(self.state, self._session_id)
-        self.window.refresh_all()
+        self._run_bisect(bisect_bridge.restore_all, 'Restoring every file', self._session_id)
 
     def _restore_all(self):
-        bisect_bridge.restore_all(self.state, self._session_id)
-        bisect_bridge.forget(self.state, self._session_id)
-        self.window.refresh_all()
+        self._run_bisect(_restore_and_forget, 'Putting every file back', self._session_id)
 
     def _finish(self):
-        bisect_bridge.finish(self.state, self._session_id)
-        bisect_bridge.forget(self.state, self._session_id)
-        self.window.refresh_all()
+        self._run_bisect(_finish_and_forget, 'Finishing 50/50', self._session_id)

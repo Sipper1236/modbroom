@@ -3,6 +3,9 @@
 The engine persists to disk via store.save_state, which mutates nothing on the
 passed-in object beyond adding/replacing the 'bisect' key — so the caller's
 state object stays authoritative for the UI.
+
+`progress` is an optional callable taking a short status string. Pages hand it
+a signal emitter so backups and file moves run off the UI thread with feedback.
 """
 from .. import bisect as _bisect
 
@@ -15,28 +18,28 @@ def all_sessions(state):
     return list((state or {}).get('bisect', {}).values())
 
 
-def start(state, files, mods_root):
-    return _bisect.start(state, files, mods_root)
+def start(state, files, mods_root, progress=None):
+    return _bisect.start(state, files, mods_root, progress=progress)
 
 
-def verdict(state, sid, result):
-    return _bisect.verdict(state, sid, result)
+def verdict(state, sid, result, progress=None):
+    return _bisect.verdict(state, sid, result, progress=progress)
 
 
-def undo_verdict(state, sid):
-    return _bisect.undo_verdict(state, sid)
+def undo_verdict(state, sid, progress=None):
+    return _bisect.undo_verdict(state, sid, progress=progress)
 
 
-def reject_candidate(state, sid):
-    return _bisect.reject_candidate(state, sid)
+def reject_candidate(state, sid, progress=None):
+    return _bisect.reject_candidate(state, sid, progress=progress)
 
 
-def restore_all(state, sid):
-    return _bisect.restore_all(state, sid)
+def restore_all(state, sid, progress=None):
+    return _bisect.restore_all(state, sid, progress=progress)
 
 
-def finish(state, sid):
-    return _bisect.finish(state, sid)
+def finish(state, sid, progress=None):
+    return _bisect.finish(state, sid, progress=progress)
 
 
 def forget(state, sid):

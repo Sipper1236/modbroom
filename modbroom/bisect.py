@@ -10,6 +10,7 @@ import os
 import shutil
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import store
@@ -44,28 +45,48 @@ def _stash_path(session, rel):
     return _session_dir(session['id']) / 'stash' / rel
 
 
-def _apply(session, desired):
-    """Move files so reality matches `desired` ({relpath: 'in'|'out'})."""
+def _apply(session, desired, progress=None):
+    """Move files so reality matches `desired` ({relpath: 'in'|'out'}).
+
+    Moves are independent, so they run in a small thread pool. On a large
+    library this is the difference between a visible pause and a quick step.
+    """
     mods = Path(session['mods_root'])
-    moved = []
-    for rel, where in desired.items():
-        target_in = mods / rel
-        target_out = _stash_path(session, rel)
-        if where == 'out':
-            if target_in.exists():
+    jobs = [(rel, where, mods / rel, _stash_path(session, rel))
+            for rel, where in desired.items()]
+    if not jobs:
+        return []
+
+    def move_one(job):
+        rel, where, target_in, target_out = job
+        try:
+            if where == 'out':
+                if not target_in.exists():
+                    return None
                 if target_out.exists():
                     target_out.unlink()
                 target_out.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(target_in), str(target_out))
-                moved.append(('out', rel))
-        else:  # 'in'
+                return ('out', rel)
             if target_out.exists():
                 target_in.parent.mkdir(parents=True, exist_ok=True)
                 if target_in.exists():
-                    backup = target_in.with_name(target_in.name + '.modbroom-conflict')
-                    shutil.move(str(target_in), str(backup))
+                    conflict = target_in.with_name(target_in.name + '.modbroom-conflict')
+                    shutil.move(str(target_in), str(conflict))
                 shutil.move(str(target_out), str(target_in))
-                moved.append(('in', rel))
+                return ('in', rel)
+        except OSError as exc:
+            raise BisectError('Could not move %s: %s' % (rel, exc))
+        return None
+
+    workers = min(8, max(2, (os.cpu_count() or 2) * 2))
+    moved = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for done, result in enumerate(pool.map(move_one, jobs), 1):
+            if result:
+                moved.append(result)
+            if progress and (done % 10 == 0 or done == len(jobs)):
+                progress('Moved %d/%d file(s)' % (done, len(jobs)))
     return moved
 
 
@@ -117,43 +138,97 @@ def _ordered_groups(pool, scores):
             for key, rs in ranked]
 
 
-def plan(pool, scores=None, risk_first=False):
-    """Split a suspect pool into (enabled, disabled).
+def _split_candidates(groups, weights, total_count):
+    """Candidate partitions of whole folder groups.
 
-    With `risk_first`, the highest-risk ~30% is moved out (never more than
-    half), keeping small folder groups intact. Every later round is a plain
-    risk-ordered half split.
+    Scores are capped so one noisy heuristic cannot dominate a test. Each
+    candidate is scored by the expected number of files left after the answer
+    (size_a * p_a + size_b * p_b), with a small penalty for lopsided counts.
+    """
+    n = len(groups)
+    sizes = [len(rels) for _k, rels in groups]
+    masses = [sum(weights[r] for r in rels) for _k, rels in groups]
+    total_mass = sum(masses)
+    order = sorted(range(n), key=lambda i: (-masses[i], groups[i][0]))
+    candidates = []
+
+    def consider(indices):
+        a = set(indices)
+        if not a or len(a) == n:
+            return
+        mass_a = sum(masses[i] for i in a)
+        mass_b = total_mass - mass_a
+        count_a = sum(sizes[i] for i in a)
+        count_b = total_count - count_a
+        cost = (count_a * mass_a + count_b * mass_b) / total_mass
+        cost += 0.02 * abs(count_a - count_b)   # discourage silly 1-vs-N splits
+        candidates.append((cost, a))
+
+    # ~50/50 by file count
+    a, b = [], []
+    for i in order:
+        (a if len(a) <= len(b) else b).append(i)
+    consider(a)
+
+    # ~50/50 by probability (largest masses first, greedily balanced)
+    a, b, ma, mb = [], [], 0.0, 0.0
+    for i in order:
+        if ma <= mb:
+            a.append(i); ma += masses[i]
+        else:
+            b.append(i); mb += masses[i]
+    consider(a)
+
+    # Isolate the k most suspicious groups: a strong hint can end the search
+    # in one game launch instead of forcing a full binary search.
+    for k in range(1, min(4, n)):
+        consider(order[:k])
+    return candidates
+
+
+def plan(pool, scores=None, risk_first=None):
+    """Split a suspect pool into (enabled, disabled) in as few tests as possible.
+
+    With no scores this is a plain 50/50 split. With scores it compares a
+    probability-balanced split, a count-balanced split and "isolate the k
+    riskiest" splits, then keeps the one that minimises the expected number
+    of files left. Folder groups stay intact when a mod has companion files.
+
+    The higher-risk half is moved *out*, so a "problem gone" answer confirms
+    the smallest possible pool immediately.
     """
     pool = list(pool)
     if len(pool) <= 1:
         return pool, []
     scores = scores or {}
-    ordered = sorted(pool, key=lambda r: (-scores.get(r, 0), r.lower()))
-    if not risk_first:
+    order = lambda rels: sorted(rels, key=lambda r: (-scores.get(r, 0), r.lower()))
+
+    if not scores:
+        ordered = order(pool)
         half = (len(ordered) + 1) // 2
         return ordered[:half], ordered[half:]
 
-    target = max(1, min(len(pool) // 2, (len(pool) * 30 + 99) // 100))
-    max_group = max(1, len(pool) // 4)
-    disabled = []
-    for _key, group in _ordered_groups(pool, scores):
-        if len(disabled) >= target:
-            break
-        take = min(len(group), max_group, target - len(disabled))
-        if take == len(group) and len(group) <= max_group:
-            disabled.extend(group)
-        else:
-            disabled.extend(group[:take])
-    if not disabled:
-        disabled = ordered[:target]
-    if len(disabled) >= len(pool):
-        disabled = ordered[:len(pool) - 1]
-    out = set(disabled)
-    enabled = [r for r in ordered if r not in out]
-    return enabled, disabled
+    weights = {r: 1.0 + min(10.0, float(max(0.0, scores.get(r, 0)))) for r in pool}
+    groups = _ordered_groups(pool, scores)
+    if len(groups) < 2:
+        # Everything lives in one folder — treat each file as its own group.
+        groups = [(r, [r]) for r in order(pool)]
+
+    candidates = _split_candidates(groups, weights, len(pool))
+    if not candidates:
+        ordered = order(pool)
+        half = (len(ordered) + 1) // 2
+        return ordered[:half], ordered[half:]
+    _cost, chosen = min(candidates, key=lambda c: c[0])
+    a = [rel for gi in sorted(chosen) for rel in groups[gi][1]]
+    b = [rel for gi in range(len(groups)) if gi not in chosen for rel in groups[gi][1]]
+    mass_a = sum(weights[r] for r in a)
+    mass_b = sum(weights[r] for r in b)
+    disabled, enabled = (a, b) if mass_a >= mass_b else (b, a)
+    return order(enabled), order(disabled)
 
 
-def start(state, files, mods_root):
+def start(state, files, mods_root, progress=None):
     mods_root = str(Path(mods_root))
     mods = Path(mods_root)
     if not mods.is_dir():
@@ -173,12 +248,11 @@ def start(state, files, mods_root):
         raise BisectError('Pick at least two files to bisect.')
 
     log.info('bisect start: %d files from %s', len(rels), mods_root)
-    backup = store.create_backup(state, mods_root, 'pre-bisect')
+    backup = store.create_backup(state, mods_root, 'pre-bisect', progress=progress)
 
     sid = uuid.uuid4().hex[:12]
     scores = risk_scores(state)
-    risk_first = bool(scores)
-    enabled, disabled = plan(rels, scores, risk_first=risk_first)
+    enabled, disabled = plan(rels, scores)
     session = {
         'id': sid,
         'created': time.time(),
@@ -192,13 +266,13 @@ def start(state, files, mods_root):
         'status': 'active',
         'culprit': None,
         'scores': scores,
-        'strategy': 'risk-first' if risk_first else 'balanced',
+        'strategy': 'risk-balanced' if scores else 'balanced',
         'rejected': [],
     }
     _session_dir(sid).mkdir(parents=True, exist_ok=True)
     desired = {rel: 'in' for rel in enabled}
     desired.update({rel: 'out' for rel in disabled})
-    session['moved'] = _apply(session, desired)
+    session['moved'] = _apply(session, desired, progress=progress)
     log.info('bisect first split (%s): %d enabled, %d disabled, %d moved',
              session['strategy'], len(enabled), len(disabled), len(session['moved']))
     sessions = _load(state)
@@ -207,7 +281,7 @@ def start(state, files, mods_root):
     return session
 
 
-def verdict(state, sid, result):
+def verdict(state, sid, result, progress=None):
     """result: 'broken' (problem still happens) or 'fixed' (problem gone)."""
     sessions = _load(state)
     s = sessions.get(sid)
@@ -241,7 +315,7 @@ def verdict(state, sid, result):
         desired.update({rel: 'in' for rel in s['pool']})
         if s['culprit']:
             desired[s['culprit']] = 'out'
-        s['moved'] = _apply(s, desired)
+        s['moved'] = _apply(s, desired, progress=progress)
         sessions[sid] = s
         _save(state, sessions)
         return s
@@ -258,13 +332,13 @@ def verdict(state, sid, result):
     s['pool'] = list(new_pool)
     s['enabled'] = list(new_enabled)
     s['disabled'] = list(new_disabled)
-    s['moved'] = _apply(s, desired)
+    s['moved'] = _apply(s, desired, progress=progress)
     sessions[sid] = s
     _save(state, sessions)
     return s
 
 
-def undo_verdict(state, sid):
+def undo_verdict(state, sid, progress=None):
     """Take back the last answer and restore the previous split.
 
     Useful when a test run was inconclusive or the wrong button was clicked.
@@ -287,13 +361,13 @@ def undo_verdict(state, sid):
     s['candidate_confirmed'] = False
     desired = {rel: 'in' for rel in s.get('members', [])}
     desired.update({rel: 'out' for rel in s['disabled']})
-    s['moved'] = _apply(s, desired)
+    s['moved'] = _apply(s, desired, progress=progress)
     sessions[sid] = s
     _save(state, sessions)
     return s
 
 
-def reject_candidate(state, sid):
+def reject_candidate(state, sid, progress=None):
     """The single remaining file is not the culprit — keep searching without it."""
     sessions = _load(state)
     s = sessions.get(sid)
@@ -316,20 +390,20 @@ def reject_candidate(state, sid):
     s['status'] = 'active'
     desired = {rel: 'in' for rel in s.get('members', [])}
     desired.update({rel: 'out' for rel in disabled})
-    s['moved'] = _apply(s, desired)
+    s['moved'] = _apply(s, desired, progress=progress)
     sessions[sid] = s
     _save(state, sessions)
     return s
 
 
-def restore_all(state, sid):
+def restore_all(state, sid, progress=None):
     """Put every file from this session back where it belongs."""
     sessions = _load(state)
     s = sessions.get(sid)
     if not s:
         raise BisectError('No such 50/50 session.')
     desired = {rel: 'in' for rel in s.get('members', [])}
-    s['moved'] = _apply(s, desired)
+    s['moved'] = _apply(s, desired, progress=progress)
     s['status'] = 'aborted'
     s['disabled'] = []
     s['enabled'] = list(s.get('members', []))
@@ -338,7 +412,7 @@ def restore_all(state, sid):
     return s
 
 
-def finish(state, sid):
+def finish(state, sid, progress=None):
     """Restore everything except the culprit, and move the culprit into quarantine."""
     sessions = _load(state)
     s = sessions.get(sid)
@@ -346,7 +420,7 @@ def finish(state, sid):
         raise BisectError('No such 50/50 session.')
     culprit = s.get('culprit')
     desired = {rel: 'in' for rel in s.get('members', []) if rel != culprit}
-    s['moved'] = _apply(s, desired)
+    s['moved'] = _apply(s, desired, progress=progress)
     # Move the culprit (still in the stash, or put back by the user) into the
     # visible quarantine so it can be restored from Tools -> Quarantine.
     if culprit:

@@ -103,12 +103,19 @@ No Sims 4? **Settings → Load demo library** builds a fake Mods folder so every
 ## The 50/50 wizard, in detail
 
 1. Pick the suspects (Diagnostics pre-selects them).
-2. ModBroom zips your whole Mods folder to `~/.modbroom/backups`, then moves half the suspects out of Mods.
+2. ModBroom zips your whole Mods folder to `~/.modbroom/backups`, then moves the chosen half out of Mods.
+   Backup reads and file moves run in background threads; already-compressed mods are stored without
+   wasteful re-compression, and a progress line shows what is happening.
 3. You launch the game and reproduce (or not).
-4. Click **Still broken** or **It's fixed**. The surviving half is split again.
+4. Click **Still broken** or **It's fixed**. The surviving half is split again. Each split is
+   risk-balanced: it compares a 50/50-by-count split, a 50/50-by-probability split and "isolate the
+   riskiest", then uses whichever leaves the fewest files on average. Related files in the same
+   folder stay together, and the screen shows how many game tests remain.
 5. When one file remains it is moved aside and named. Everything else is put back.
 
-Every step is reversible from **Tools → Quarantine**; a pre-bisect backup is always taken first.
+Every step is reversible — **Undo last answer**, **Not this one — keep searching**, or
+**Stop and put everything back** — and a pre-bisect backup is always taken first. The backup and
+all file moves happen off the UI thread, so the window stays responsive even on a large library.
 
 ## Layout
 
@@ -140,7 +147,7 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-67 tests cover the DBPF parser, the RefPack codec (round-trip + corruption handling), `Resource.cfg` load order and conflict-winner prediction, the bisect engine, quarantine/restore, crash-log ranking, and the HTML report.
+72 tests cover the DBPF parser, the RefPack codec (round-trip + corruption handling), `Resource.cfg` load order and conflict-winner prediction, the bisect engine, quarantine/restore, crash-log ranking, and the HTML report.
 
 CI runs the same suite on Ubuntu, then builds the Windows exe on `windows-latest` and smoke-tests it before uploading the artifact.
 

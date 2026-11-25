@@ -83,6 +83,52 @@ def test_risk_first_split_moves_high_risk_files_out():
     assert enabled and set(enabled).isdisjoint(disabled)
 
 
+def test_plain_split_is_balanced():
+    pool = ['f%02d.package' % i for i in range(12)]
+    enabled, disabled = bisect.plan(pool)
+    assert len(enabled) == 6 and len(disabled) == 6
+    assert set(enabled).isdisjoint(disabled)
+
+
+def test_risk_balanced_split_isolates_strong_hint():
+    pool = ['f%02d.package' % i for i in range(12)]
+    scores = {pool[0]: 10, pool[1]: 8}
+    enabled, disabled = bisect.plan(pool, scores)
+    # A strong hint should be moved out, leaving a small pool if it is right.
+    assert set(scores).issubset(set(disabled))
+    assert len(disabled) <= len(enabled)
+    assert set(enabled).isdisjoint(disabled)
+
+
+def test_mod_companion_files_stay_in_the_same_half():
+    pool = ['a/main.package', 'a/extra.package', 'b/main.package', 'b/extra.package']
+    scores = {'a/main.package': 9}
+    enabled, disabled = bisect.plan(pool, scores)
+    for folder in ('a', 'b'):
+        members = [r for r in pool if r.startswith(folder + '/')]
+        assert set(members).issubset(set(enabled)) or set(members).issubset(set(disabled))
+
+
+def test_bisect_reports_progress_during_start(mods, tmp_path):
+    state = store.load_state()
+    files = [str(p) for p in sorted(mods.iterdir()) if p.is_file()]
+    messages = []
+    s = bisect.start(state, files, str(mods), progress=messages.append)
+    assert s['status'] == 'active'
+    assert any('Backed up' in m for m in messages)
+    assert any('Moved' in m for m in messages)
+
+
+def test_backup_does_not_recompress_package_files(mods, tmp_path, monkeypatch):
+    monkeypatch.setattr(store, 'BACKUP_DIR', tmp_path / 'backups')
+    messages = []
+    path = store.create_backup({}, str(mods), 'test', progress=messages.append)
+    with zipfile.ZipFile(path) as zf:
+        info = zf.getinfo('cool_hair_v2.package')
+        assert info.compress_type == zipfile.ZIP_STORED
+    assert any('Backed up' in m for m in messages)
+
+
 def test_bisect_undo_restores_previous_split(mods):
     state = store.load_state()
     files = [str(p) for p in sorted(mods.iterdir()) if p.is_file()]

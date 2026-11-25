@@ -1,5 +1,6 @@
 """Persistent state: settings, quarantine, 50/50 sessions, profiles, backups."""
 import json, os, shutil, time, uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 APP_DIR = Path.home() / '.modbroom'
@@ -151,7 +152,18 @@ def delete_quarantine(state, ids):
     save_state(state)
     return deleted
 
-def create_backup(state, mods_path, label='manual'):
+# Already-compressed formats: re-deflating them wastes CPU without saving
+# meaningful space, which made starting a bisect feel stalled on big libraries.
+BACKUP_STORED_EXTS = {
+    '.package', '.ts4script', '.zip', '.7z', '.rar', '.bz2', '.gz',
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.psd', '.tga',
+    '.ogg', '.mp3', '.wav', '.flac', '.mp4', '.avi', '.mkv',
+    '.pyc', '.dbf', '.woff', '.woff2',
+}
+
+
+def create_backup(state, mods_path, label='manual', progress=None):
+    """Zip the Mods folder. `progress(message)` is called for long runs."""
     _ensure()
     mods = Path(mods_path)
     if not mods.exists():
@@ -159,12 +171,30 @@ def create_backup(state, mods_path, label='manual'):
     stamp = time.strftime('%Y%m%d-%H%M%S')
     dest = BACKUP_DIR / ('backup-%s-%s.zip' % (label, stamp))
     import zipfile
-    with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(mods):
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
-            for name in files:
-                fp = Path(root) / name
-                zf.write(fp, fp.relative_to(mods))
+    files = []
+    for root, dirs, names in os.walk(mods):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        files.extend(Path(root) / name for name in names)
+    total = len(files)
+
+    def read_one(fp):
+        return fp.read_bytes()
+
+    # Read small batches concurrently (bounded memory), write sequentially.
+    with ThreadPoolExecutor(max_workers=4) as pool, \
+            zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for start in range(0, total, 8):
+            batch = files[start:start + 8]
+            for i, (fp, data) in enumerate(zip(batch, pool.map(read_one, batch)), start + 1):
+                st = fp.stat()
+                stored = (fp.suffix.lower() in BACKUP_STORED_EXTS or st.st_size > 32 * 1024 * 1024)
+                info = zipfile.ZipInfo(str(fp.relative_to(mods)),
+                                       date_time=time.localtime(st.st_mtime)[:6])
+                info.compress_type = zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED
+                info.external_attr = 0o600 << 16
+                zf.writestr(info, data)
+                if progress and (i % 10 == 0 or i == total):
+                    progress('Backed up %d/%d file(s)' % (i, total))
     return str(dest)
 
 def list_backups():
