@@ -38,6 +38,11 @@ jobs:
           pip install PySide6-Essentials pyinstaller
       - name: Build exe
         run: pyinstaller --noconfirm --clean modbroom.spec
+      - name: Import every UI module (headless)
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          python -c "import modbroom.ui.app, modbroom.ui.pages.dashboard, modbroom.ui.pages.library, modbroom.ui.pages.diagnostics, modbroom.ui.pages.fifty, modbroom.ui.pages.tools, modbroom.ui.pages.settings, modbroom.ui.pages.companion, modbroom.ui.bisect_bridge; print('all UI modules import cleanly')"
       - name: Verify the exe exists and is non-trivial
         shell: pwsh
         run: |
@@ -47,10 +52,13 @@ jobs:
       - name: Smoke test --cli-scan
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\empty_mods" | Out-Null
-          $out = & dist\ModBroom.exe --cli-scan "$env:RUNNER_TEMP\empty_mods" 2>&1 | Out-String
+          $demo = "$env:RUNNER_TEMP\demo_mods"
+          New-Item -ItemType Directory -Force "$demo" | Out-Null
+          python -m modbroom.demo "$demo"
+          $out = & dist\ModBroom.exe --cli-scan "$demo" 2>&1 | Out-String
           Write-Host $out
           if ($out -notmatch 'Scanned') { throw 'exe did not produce scan output' }
+          if ($out -notmatch 'conflicts=') { throw 'exe output missing conflict report' }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

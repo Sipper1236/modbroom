@@ -1,5 +1,5 @@
 """Generate a synthetic Sims 4 Mods folder for demo/testing purposes."""
-import io, os, random, struct, zlib, zipfile
+import io, os, random, struct, sys, zlib, zipfile
 from pathlib import Path
 from .dbpf import COMP_ZLIB, COMP_UNCOMPRESSED
 
@@ -96,3 +96,9 @@ def make_demo_library(root=None):
     (logs / 'LastException_2026-11-20.txt').write_text(
         'SAVED_CRASH\nException: 0xc0000005\nfree_money_cheat.py line 3\nsubprocess.CalledProcessError\n')
     return root
+
+
+if __name__ == '__main__':
+    target = sys.argv[1] if len(sys.argv) > 1 else None
+    root = make_demo_library(target)
+    print('Demo Mods folder written to %s' % root)
