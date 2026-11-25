@@ -23,6 +23,9 @@ import urllib.request
 from pathlib import Path
 
 from . import __version__
+from .log import get_logger
+
+log = get_logger('updater')
 
 REPO = 'Sipper1236/modbroom'
 API_LATEST = 'https://api.github.com/repos/%s/releases/latest' % REPO
@@ -116,6 +119,7 @@ def check_for_update(current=__version__):
     The message is human-readable and safe to show in the UI.
     """
     rel = fetch_latest_release()
+    log.info('release check: installed=%s latest=%s', current, rel['version'])
     if not rel['version']:
         return None, 'No release information found.'
     if is_newer(rel['version'], current):
@@ -149,6 +153,7 @@ def download_asset(url, dest_dir=None, progress=None):
     except OSError as exc:
         raise UpdateError('Could not write the download (%s)' % exc)
     tmp.replace(target)
+    log.info('downloaded %s (%d bytes) to %s', url.rsplit('/', 1)[-1], done, target)
     return target
 
 
@@ -159,6 +164,7 @@ def install_update(new_binary):
     renamed (allowed while running) and cleaned up on the next launch.
     """
     new_binary = Path(new_binary)
+    log.info('install requested: %s -> %s', new_binary, current_executable())
     exe = current_executable()
     if exe is None:
         raise UpdateError('Cannot replace the binary while running from source.')
@@ -187,6 +193,7 @@ def install_update(new_binary):
             raise UpdateError('Could not install the new version (%s)' % exc)
         # the old copy is removed the next time the app starts
         _schedule_cleanup(old)
+        log.info('installed update; scheduled cleanup of %s', old)
         return 'Installed %s. Restart ModBroom to finish.' % exe.name
 
     try:

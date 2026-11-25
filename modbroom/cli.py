@@ -4,22 +4,30 @@ import json
 import sys
 
 from . import scanner, game_rules, store
+from . import log as log_module
+
+log = log_module.get_logger('cli')
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='modbroom --cli-scan')
     ap.add_argument('path', nargs='?', help='Mods folder (defaults to the configured one)')
+    ap.add_argument('-v', '--verbose', action='store_true', help='Print DEBUG logs to stderr')
+    ap.add_argument('--log-file', metavar='PATH', help='Write the verbose log to PATH')
     ap.add_argument('--json', action='store_true', help='Emit raw JSON')
     ap.add_argument('--html', metavar='OUT', help='Write a standalone HTML report to OUT')
     ap.add_argument('--csv', metavar='OUT', help='Write a CSV file list to OUT')
     ap.add_argument('--manifest', metavar='OUT', help='Write a JSON manifest to OUT')
     args = ap.parse_args(argv)
+    log_module.setup(verbose=True if args.verbose else None, log_file=args.log_file, force=True)
+    log.debug('CLI arguments: %s', vars(args))
 
     st = store.load_state()
     mods = args.path or st['settings'].get('mods_path')
     if not mods:
         print('No Mods folder configured; pass one as an argument.', file=sys.stderr)
         return 2
+    log.info('CLI scan requested: %s', mods)
     scan = scanner.scan_tree(mods, st['settings'].get('saves_path'), st['settings'].get('tray_path'))
     findings = scanner.analyze(scan, mods_path=scan.get('mods_path'))
     rules = game_rules.analyze(scan)

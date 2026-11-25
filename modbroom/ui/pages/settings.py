@@ -2,7 +2,8 @@
 import os
 import threading
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QFormLayout, QLineEdit, QPushButton, QCheckBox, QHBoxLayout,
                                QVBoxLayout, QLabel, QFileDialog, QMessageBox, QFrame,
                                QProgressBar, QTextEdit)
@@ -97,6 +98,7 @@ class SettingsPage(Page):
         self.layout_.addLayout(row)
 
         self.layout_.addWidget(self._update_card())
+        self.layout_.addWidget(self._log_card())
 
         demo_frame = QFrame()
         demo_frame.setObjectName('card')
@@ -117,6 +119,39 @@ class SettingsPage(Page):
         dl.addWidget(demo_btn, 0)
         self.layout_.addWidget(demo_frame)
         self.layout_.addStretch(1)
+
+    # ------------------------------------------------------------ logging
+    def _log_card(self):
+        from ... import log
+        frame = QFrame()
+        frame.setObjectName('card')
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(8)
+        title = QLabel('Verbose log')
+        title.setObjectName('h2')
+        lay.addWidget(title)
+        path = log.log_path()
+        note = QLabel(
+            'ModBroom writes a detailed DEBUG log to:\n%s\n'
+            'It rotates at 2 MB and keeps three older copies. Nothing is sent anywhere.'
+            % path)
+        note.setObjectName('muted')
+        note.setWordWrap(True)
+        lay.addWidget(note)
+
+        row = QHBoxLayout()
+        open_log = QPushButton('Open log file')
+        open_log.setObjectName('ghost')
+        open_log.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
+        open_folder = QPushButton('Open logs folder')
+        open_folder.setObjectName('ghost')
+        open_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent))))
+        row.addWidget(open_log)
+        row.addWidget(open_folder)
+        row.addStretch(1)
+        lay.addLayout(row)
+        return frame
 
     # ------------------------------------------------------------ updater
     def _update_card(self):

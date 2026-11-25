@@ -175,14 +175,17 @@ class MainWindow(QMainWindow):
             if hasattr(page, 'refresh'):
                 try:
                     page.refresh()
-                except Exception as exc:
-                    print('refresh error in %s: %s' % (type(page).__name__, exc))
+                except Exception:
+                    from .. import log as _log
+                    _log.get_logger('ui').exception('refresh failed in %s', type(page).__name__)
 
     def goto(self, index):
         self.nav.setCurrentRow(index)
 
 
 def main():
+    from .. import log
+    log.setup()
     app = QApplication(sys.argv)
     app.setApplicationName('ModBroom')
     app.setOrganizationName('ModBroom')

@@ -3,6 +3,9 @@ import os, re, hashlib, time, zipfile
 from pathlib import Path
 from .dbpf import PackageReader, PackageError
 from . import loadorder
+from .log import get_logger
+
+log = get_logger('scanner')
 
 SCRIPT_EXTS = {'.ts4script'}
 PACKAGE_EXTS = {'.package'}
@@ -83,6 +86,7 @@ def scan_script_zip(path):
 
 def scan_tree(mods_path, saves_path=None, tray_path=None, progress=None):
     """Walk folders and collect raw file facts."""
+    log.info('scan start: %s', mods_path)
     mods_path = Path(mods_path)
     result = {
         'mods_path': str(mods_path),
@@ -92,6 +96,7 @@ def scan_tree(mods_path, saves_path=None, tray_path=None, progress=None):
         'total_bytes': 0,
     }
     if not mods_path.exists():
+        log.warning('Mods folder not found: %s', mods_path)
         result['errors'].append('Mods folder not found: %s' % mods_path)
         return result
 
@@ -138,6 +143,7 @@ def scan_tree(mods_path, saves_path=None, tray_path=None, progress=None):
             result['files'].append(rec)
             result['total_bytes'] += rec['size']
             continue
+        log.debug('file %s: kind=%s size=%d', p.name, rec['kind'], rec['size'])
         try:
             if rec['kind'] == 'package':
                 reader = PackageReader(p)
@@ -155,9 +161,15 @@ def scan_tree(mods_path, saves_path=None, tray_path=None, progress=None):
         except PackageError as e:
             rec['parse_ok'] = False
             rec['parse_error'] = str(e)
+            log.warning('cannot parse %s: %s', p.name, e)
         except Exception as e:
             rec['parse_ok'] = False
             rec['parse_error'] = 'Unexpected: %s' % e
+            log.exception('unexpected error reading %s', p.name)
+        for err in rec.get('integrity_errors') or []:
+            log.warning('integrity: %s — %s', p.name, err)
+        for finding in rec.get('script_findings') or []:
+            log.debug('script risk: %s — [%s] %s', p.name, finding.get('level'), finding.get('msg'))
         result['files'].append(rec)
         result['total_bytes'] += rec['size']
 
@@ -172,6 +184,8 @@ def scan_tree(mods_path, saves_path=None, tray_path=None, progress=None):
                     f['sha256'] = sha256_file(f['path'])
                 except OSError:
                     pass
+    log.info('scan complete: %d files, %d bytes, %d errors',
+             len(result['files']), result['total_bytes'], len(result['errors']))
     return result
 
 def analyze(scan, mods_path=None):
@@ -251,6 +265,11 @@ def analyze(scan, mods_path=None):
         for s in f.get('script_findings') or []:
             findings['script_risks'].append({'file': f['path'], **s})
 
+    log.info('findings: duplicates=%d resource_dupes=%d conflicts=%d integrity=%d parse=%d script_risks=%d',
+             len(findings['duplicates']), len(findings['resource_dupes']), len(findings['conflicts']),
+             len(findings['integrity']), len(findings['parse_errors']), len(findings['script_risks']))
+    for err in findings['parse_errors']:
+        log.warning('parse error: %s — %s', err['file'], err['error'])
     # --- stats ---
     total_entries = sum(f.get('entry_count', 0) for f in files)
     pkgs = sum(1 for f in files if f['kind'] == 'package')

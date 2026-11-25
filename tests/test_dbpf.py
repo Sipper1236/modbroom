@@ -98,6 +98,40 @@ def test_real_style_header_uses_long_index_offset_at_0x40(tmp_path):
     assert reader.resource_bytes(reader.entries[0]) == b'z' * 60
 
 
+def test_legacy_1x_header_layout_is_supported(tmp_path):
+    """A package written with the DBPF 1.x header slots must still parse."""
+    good = bytearray(_build_package([(0x015A1849, 0, 1, b'x' * 80)]))
+    count = struct.unpack_from('<I', good, 36)[0]
+    offset = struct.unpack_from('<Q', good, 64)[0]
+    size = struct.unpack_from('<I', good, 44)[0]
+    # Move the same index facts into the 1.x slots and blank the 2.x slots.
+    struct.pack_into('<I', good, 28, count)
+    struct.pack_into('<I', good, 32, offset)
+    struct.pack_into('<I', good, 36, size)   # 1.x size shares the 2.x count slot
+    struct.pack_into('<I', good, 40, 0)
+    struct.pack_into('<I', good, 44, 0)
+    struct.pack_into('<Q', good, 64, 0)
+
+    pkg = tmp_path / 'legacy.package'
+    pkg.write_bytes(good)
+    reader = dbpf.PackageReader(pkg)
+    assert reader.layout == 'DBPF 1.x'
+    assert len(reader.entries) == 1
+    assert reader.resource_bytes(reader.entries[0]) == b'x' * 80
+
+
+def test_no_index_offset_error_reports_raw_header(tmp_path):
+    """The failure message must carry the bytes needed to diagnose it."""
+    pkg = tmp_path / 'empty_header.package'
+    pkg.write_bytes(b'DBPF' + struct.pack('<2I', 2, 1) + b'\x00' * 120)
+    with pytest.raises(dbpf.PackageError) as excinfo:
+        dbpf.PackageReader(pkg)
+    msg = str(excinfo.value)
+    assert 'No index offset present' in msg
+    assert 'DBPF 2.x short=0 long=0' in msg
+    assert 'DBPF 1.x short=0 long=0' in msg
+
+
 def test_refpack_entry_decompresses(tmp_path):
     import zlib
     payload = b'print("hello sims")\n' * 50

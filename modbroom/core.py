@@ -9,6 +9,9 @@ import traceback
 
 from . import scanner, store, crashlog, game_rules, demo
 from .store import load_state, save_state
+from .log import get_logger
+
+log = get_logger('core')
 
 APP_DIR = store.APP_DIR
 PARTNER_PATH = APP_DIR / 'partner.json'
@@ -49,6 +52,7 @@ def run_scan(state, on_progress=None, on_done=None, on_error=None):
             s = state['settings']
             mods = s.get('mods_path') or ''
             t0 = time.time()
+            log.info('pipeline start: mods=%s', mods)
             scan = scanner.scan_tree(mods, s.get('saves_path'), s.get('tray_path'),
                                      progress=on_progress)
             findings = scanner.analyze(scan, mods_path=scan.get('mods_path'))
@@ -71,10 +75,12 @@ def run_scan(state, on_progress=None, on_done=None, on_error=None):
             except Exception:
                 pass
             save_state(state)
+            log.info('pipeline complete in %.2fs: %d files, %d findings, %d game-rule notes',
+                     time.time() - t0, len(scan['files']), len(findings.get('conflicts', [])), len(gr))
             if on_done:
                 on_done(state)
         except Exception as exc:
-            traceback.print_exc()
+            log.exception('scan pipeline failed')
             if on_error:
                 on_error(exc)
     threading.Thread(target=worker, daemon=True).start()

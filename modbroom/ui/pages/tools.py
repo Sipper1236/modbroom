@@ -217,12 +217,26 @@ class ToolsPage(Page):
         lines = [path, 'Size: %s' % fmt_size(os.path.getsize(path)), '']
         if ext == '.package':
             try:
+                info = dbpf.describe_header(path)
+                lines.append('Header: DBPF %s.%s' % (info.get('major'), info.get('minor')))
+                lines.append('  2.x layout: count@0x24=%s, short@0x28=%s, long@0x40=%s, size@0x2C=%s'
+                             % (info.get('index_count_0x24'), info.get('short_offset_0x28'),
+                                info.get('long_offset_0x40'), info.get('index_size_0x2C')))
+                lines.append('  1.x layout: count@0x1C=%s, offset@0x20=%s, size@0x24=%s'
+                             % (info.get('index_count_0x1C'), info.get('offset_0x20'),
+                                info.get('index_count_0x24')))
                 reader = dbpf.PackageReader(path)
-                lines.append('DBPF readable: yes — %d resources' % len(reader.entries))
+                lines.append('DBPF readable: yes — %d resources (layout: %s)'
+                             % (len(reader.entries), getattr(reader, 'layout', '?')))
                 errs = reader.integrity_errors()
                 lines.append('Integrity: ' + ('OK' if not errs else '; '.join(errs)))
             except Exception as exc:
                 lines.append('DBPF readable: NO — %s' % exc)
+                try:
+                    info = dbpf.describe_header(path)
+                    lines.append('Header words: %s' % ' '.join(info.get('raw_words') or []))
+                except Exception:
+                    pass
         elif ext == '.ts4script':
             findings = scanner.scan_script_zip(path)
             if findings:

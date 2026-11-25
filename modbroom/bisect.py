@@ -13,6 +13,9 @@ import uuid
 from pathlib import Path
 
 from . import store
+from .log import get_logger
+
+log = get_logger('bisect')
 
 BISECT_DIR = store.APP_DIR / 'bisect'
 
@@ -169,6 +172,7 @@ def start(state, files, mods_root):
     if len(rels) < 2:
         raise BisectError('Pick at least two files to bisect.')
 
+    log.info('bisect start: %d files from %s', len(rels), mods_root)
     backup = store.create_backup(state, mods_root, 'pre-bisect')
 
     sid = uuid.uuid4().hex[:12]
@@ -195,6 +199,8 @@ def start(state, files, mods_root):
     desired = {rel: 'in' for rel in enabled}
     desired.update({rel: 'out' for rel in disabled})
     session['moved'] = _apply(session, desired)
+    log.info('bisect first split (%s): %d enabled, %d disabled, %d moved',
+             session['strategy'], len(enabled), len(disabled), len(session['moved']))
     sessions = _load(state)
     sessions[sid] = session
     _save(state, sessions)
@@ -218,6 +224,7 @@ def verdict(state, sid, result):
     else:
         culprit_half, cleared = disabled, enabled
 
+    log.info('bisect verdict %s: pool %d -> %d', result, len(s['pool']), len(culprit_half))
     s['history'].append({'step': len(s['history']) + 1, 'result': result,
                          'pool_before': list(s['pool']),
                          'enabled': list(enabled), 'disabled': list(disabled),
@@ -269,6 +276,7 @@ def undo_verdict(state, sid):
     history = s.get('history') or []
     if not history:
         raise BisectError('There is no answer to undo yet.')
+    log.info('bisect undo requested')
     step = history.pop()
     pool_before = step.get('pool_before') or (list(step.get('enabled') or []) + list(step.get('disabled') or []))
     s['pool'] = list(pool_before)
@@ -297,6 +305,7 @@ def reject_candidate(state, sid):
     remaining = [rel for rel in s.get('members', []) if rel != culprit]
     if len(remaining) < 2:
         raise BisectError('No files left to test — restore everything instead.')
+    log.info('bisect candidate rejected: %s', culprit)
     s.setdefault('rejected', []).append(culprit)
     enabled, disabled = plan(remaining, s.get('scores'))
     s['pool'] = remaining

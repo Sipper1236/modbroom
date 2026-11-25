@@ -6,8 +6,12 @@ Dependency-free (stdlib only) so the app can ship as a single-file Windows exe.
 
 import struct
 import zlib
+from pathlib import Path
 
 from .refpack import decompress as _refpack_decompress, COMP_REFPACK, RefPackError
+from .log import get_logger
+
+log = get_logger('dbpf')
 
 COMP_UNCOMPRESSED = 0x0000
 COMP_ZLIB = 0x5A42          # 'ZB' little-endian
@@ -77,6 +81,45 @@ class ResourceEntry:
         }
 
 
+def _header_candidates(header):
+    """Possible (count, offset, size) triples for a DBPF header.
+
+    Maxis TS4 packages use the DBPF 2.1 layout, but older tools (and some
+    Sims 3-era packages that still load in TS4) use the 1.x layout. Trying both
+    and validating against the file size avoids rejecting a good package just
+    because its author wrote a different header variant.
+    """
+    u32 = lambda off: struct.unpack_from("<I", header, off)[0]
+    u64 = lambda off: struct.unpack_from("<Q", header, off)[0]
+
+    short = u32(0x28)
+    long_ = u64(0x40)
+    two = {
+        'layout': 'DBPF 2.x', 'count': u32(0x24),
+        'offset': long_ or short, 'size': u32(0x2C),
+        'short': short, 'long': long_,
+    }
+    off1 = u32(0x20)
+    one = {
+        'layout': 'DBPF 1.x', 'count': u32(0x1C),
+        'offset': off1, 'size': u32(0x24),
+        'short': off1, 'long': 0,
+    }
+    return [two, one]
+
+
+def _candidate_ok(c, file_size):
+    """A candidate that points inside the file with a believable entry count."""
+    off = c['offset']
+    if not off or off + 4 > file_size:
+        return False
+    if c['count'] > 500000:
+        return False
+    if c['size'] and off + c['size'] > file_size:
+        return False
+    return True
+
+
 class PackageReader:
     """Read a .package file's index and (on demand) decompressed resources."""
 
@@ -98,19 +141,34 @@ class PackageReader:
             if header[:4] != b"DBPF":
                 raise PackageError("Not a DBPF package (missing 'DBPF' magic)")
             self.major, self.minor = struct.unpack_from("<2I", header, 4)
-            index_count = struct.unpack_from("<I", header, 36)[0]
-            index_offset_short = struct.unpack_from("<I", header, 40)[0]
-            index_size = struct.unpack_from("<I", header, 44)[0]
-            # DBPF 2.x: the 64-bit index offset lives at 0x40. Maxis sets the
-            # 32-bit short offset to 0, so reading the wrong slot makes every
-            # real package look like it has no index.
-            long_index_offset = struct.unpack_from("<Q", header, 64)[0]
-            index_offset = long_index_offset if long_index_offset else index_offset_short
-            self._index_count = index_count
-            if index_offset == 0:
-                raise PackageError("No index offset present")
             fh.seek(0, 2)
             self._size = fh.tell()
+
+            candidates = _header_candidates(header)
+            for c in candidates:
+                log.debug('header candidate %s in %s: count=%d offset=%d size=%d (short=%d long=%d)',
+                          c['layout'], Path(self.path).name, c['count'], c['offset'],
+                          c['size'], c['short'], c['long'])
+            valid = [c for c in candidates if _candidate_ok(c, self._size)]
+            chosen = valid[0] if valid else next((c for c in candidates if c['offset']), candidates[0])
+            self.layout = chosen['layout']
+            index_count = chosen['count']
+            index_offset = chosen['offset']
+            index_size = chosen['size']
+            self._index_count = index_count
+
+            if index_offset == 0:
+                detail = ', '.join('%s short=%d long=%d count=%d size=%d'
+                                   % (c['layout'], c['short'], c['long'], c['count'], c['size'])
+                                   for c in candidates)
+                info = describe_header(self.path)
+                log.warning('no index offset in %s — %s; header words=%s',
+                            self.path, detail, info.get('raw_words'))
+                raise PackageError('No index offset present (%s; DBPF %d.%d)'
+                                   % (detail, self.major, self.minor))
+
+            log.debug('using %s layout for %s: index@%d count=%d size=%d',
+                      self.layout, Path(self.path).name, index_offset, index_count, index_size)
             fh.seek(index_offset)
             expected = index_size if index_size else (self._size - index_offset)
             index_bytes = fh.read(expected)
@@ -223,6 +281,28 @@ class PackageReader:
 
     def tgi_set(self):
         return {e.tgi for e in self.entries}
+
+
+def describe_header(path):
+    """Raw DBPF header fields, for diagnosing packages with unusual layouts."""
+    with open(path, 'rb') as fh:
+        header = fh.read(96)
+    if len(header) < 96:
+        return {'error': 'header is %d bytes (expected 96)' % len(header)}
+    words = struct.unpack_from('<24I', header, 0)
+    return {
+        'magic': header[:4].decode('latin-1'),
+        'major': words[1],
+        'minor': words[2],
+        'index_count_0x1C': words[7],
+        'offset_0x20': words[8],
+        'index_count_0x24': words[9],
+        'short_offset_0x28': words[10],
+        'index_size_0x2C': words[11],
+        'dword_0x3C': words[15],
+        'long_offset_0x40': struct.unpack_from('<Q', header, 64)[0],
+        'raw_words': ['0x%08X' % w for w in words],
+    }
 
 
 def looks_like_package(path) -> bool:

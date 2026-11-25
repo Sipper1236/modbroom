@@ -1,7 +1,10 @@
 import sys
 
+from . import log
+
 
 def main():
+    log.setup()
     if '--cli-scan' in sys.argv:
         from . import cli
         return cli.main([a for a in sys.argv[1:] if a != '--cli-scan'])

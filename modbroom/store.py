@@ -7,6 +7,10 @@ STATE_FILE = APP_DIR / 'state.json'
 QUAR_DIR = APP_DIR / 'quarantine'
 BACKUP_DIR = APP_DIR / 'backups'
 
+# Bump when a parser/finding change makes previously cached results invalid.
+CACHE_SCHEMA = 'dbpf-2x-1x-20261125'
+CACHED_KEYS = ('last_scan', 'last_findings', 'last_usage', 'last_game_rules', 'last_crashlogs')
+
 DEFAULT_STATE = {
     'settings': {
         'mods_path': '',
@@ -25,6 +29,7 @@ DEFAULT_STATE = {
     'last_findings': None,
     'last_usage': None,
     'last_crashlogs': None,
+    'cache_schema': CACHE_SCHEMA,
 }
 
 def _ensure():
@@ -44,6 +49,13 @@ def load_state():
             merged_settings = dict(DEFAULT_STATE['settings'])
             merged_settings.update(data.get('settings', {}))
             merged['settings'] = merged_settings
+            if merged.get('cache_schema') != CACHE_SCHEMA:
+                # Stale results from an older parser are worse than no results:
+                # they keep showing errors that a re-scan would no longer find.
+                for key in CACHED_KEYS:
+                    merged[key] = None
+                merged['cache_schema'] = CACHE_SCHEMA
+                save_state(merged)
             return merged
         except Exception:
             pass

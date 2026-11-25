@@ -60,6 +60,21 @@ network call is the release check itself.
 Running from source (`python run.py`) there is no binary to replace, so the button explains
 that and points you at the releases page.
 
+## Verbose logging
+
+ModBroom always writes a rotating DEBUG log to `~/.modbroom/modbroom.log` (2 MB, three
+backups). Nothing is sent anywhere. **Settings → Verbose log** opens the file or its folder.
+
+For a headless scan, `python -m modbroom --cli-scan --verbose --log-file debug.log PATH`
+prints the same detail to stderr — every file, every DBPF header candidate, every parse
+error and finding. Without `--verbose`, warnings still go to stderr and everything is in
+the log file. `MODBROOM_DEBUG=1` enables verbose console output for the GUI too.
+
+If a package is reported as broken, **Tools → Check one file** now prints the raw header
+values for both DBPF 2.x and 1.x layouts, plus every raw header word — include those lines
+when reporting a parser bug. Cached scan results are discarded automatically when the
+parser changes, so upgrading never leaves old errors on the dashboard.
+
 **Download the Windows exe**
 
 Every push builds `dist/ModBroom.exe` on GitHub Actions and attaches it to tagged releases — grab it from the [Releases](https://github.com/Sipper1236/modbroom/releases) page. It needs no Python install.
@@ -125,7 +140,7 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-38 tests cover the DBPF parser, the RefPack codec (round-trip + corruption handling), `Resource.cfg` load order and conflict-winner prediction, the bisect engine, quarantine/restore, crash-log ranking, and the HTML report.
+67 tests cover the DBPF parser, the RefPack codec (round-trip + corruption handling), `Resource.cfg` load order and conflict-winner prediction, the bisect engine, quarantine/restore, crash-log ranking, and the HTML report.
 
 CI runs the same suite on Ubuntu, then builds the Windows exe on `windows-latest` and smoke-tests it before uploading the artifact.
 
