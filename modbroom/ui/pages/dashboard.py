@@ -46,7 +46,7 @@ class DashboardPage(Page):
 
         self.health = QLabel('')
         self.health.setWordWrap(True)
-        self.health.setObjectName('h2')
+        self.health.setObjectName('healthBanner')
         self.body_l.addWidget(self.health)
 
         self.summary = QLabel('')
@@ -67,8 +67,8 @@ class DashboardPage(Page):
         self.issues.setEditTriggers(QTableWidget.NoEditTriggers)
         self.issues.setSelectionBehavior(QTableWidget.SelectRows)
         self.issues.setAlternatingRowColors(True)
-        self.issues.setMinimumHeight(180)
-        self.body_l.addWidget(self.issues, 1)
+        self.issues.setMinimumHeight(140)
+        self.body_l.addWidget(self.issues, 0)
 
         row = QHBoxLayout()
         self.fix_btn = QPushButton('Review in Diagnostics')
@@ -114,14 +114,14 @@ class DashboardPage(Page):
         high = stats.get('high_risks', 0) + stats.get('integrity', 0)
         warn = stats.get('conflicts', 0) + dup
         if high:
-            self.health.setText('⚠ %d serious problem(s) — something here is likely crashing or being ignored.' % high)
-            self.health.setStyleSheet('color: %s;' % theme.BAD)
+            self.health.setText('⚠  %d serious problem(s) — something here is likely crashing or being ignored.' % high)
+            self.health.setStyleSheet('QLabel#healthBanner { color: #ffd7d3; background: #3a1f1d; border: 1px solid %s; border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 600; }' % theme.BAD)
         elif warn:
-            self.health.setText('Mostly healthy — %d thing(s) worth a look.' % warn)
-            self.health.setStyleSheet('color: %s;' % theme.WARN)
+            self.health.setText('◐  Mostly healthy — %d thing(s) worth a look.' % warn)
+            self.health.setStyleSheet('QLabel#healthBanner { color: #ffe9b3; background: #33290f; border: 1px solid %s; border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 600; }' % theme.WARN)
         else:
-            self.health.setText('Clean. Nothing flagged.')
-            self.health.setStyleSheet('color: %s;' % theme.GOOD)
+            self.health.setText('✓  Clean. Nothing flagged.')
+            self.health.setStyleSheet('QLabel#healthBanner { color: #c8f7dd; background: #14301f; border: 1px solid %s; border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 600; }' % theme.GOOD)
 
         scanned = time.strftime('%H:%M:%S', time.localtime(scan.get('scanned_at', time.time())))
         gb = (scan.get('total_bytes') or 0) / (1024 ** 3)
@@ -160,3 +160,7 @@ class DashboardPage(Page):
             self.issues.setItem(i, 1, QTableWidgetItem(b))
             self.issues.setItem(i, 2, QTableWidgetItem(c))
         self.issues_title.setText('Needs attention (%d)' % len(rows) if rows else 'Needs attention')
+        # size the table to its rows so a short list does not leave a huge void
+        row_h = self.issues.rowHeight(0) if self.issues.rowCount() else 28
+        want = self.issues.horizontalHeader().height() + 2 + row_h * self.issues.rowCount() + 6
+        self.issues.setMaximumHeight(max(min(want, 520), 120))

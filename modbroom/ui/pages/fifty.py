@@ -58,6 +58,7 @@ class FiftyPage(Page):
         self.files.setAlternatingRowColors(True)
         self.files.itemChanged.connect(self._on_item_changed)
         sel.addWidget(self.files, 1)
+        self.files.setStyleSheet('QListWidget { padding: 4px; }')
 
         start_row = QHBoxLayout()
         self.start_btn = QPushButton('Start 50/50')

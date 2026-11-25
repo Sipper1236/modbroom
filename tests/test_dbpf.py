@@ -71,7 +71,6 @@ def test_refpack_entry_roundtrip(tmp_path):
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
     from refpack_helper import encode
-    import struct
     from modbroom import dbpf
 
     payload = b'print("hello from a genuinly-typed script")\n' * 40

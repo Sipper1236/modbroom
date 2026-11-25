@@ -1,9 +1,11 @@
 """Every file ModBroom saw, searchable and sortable."""
 import os
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem,
                                QHeaderView, QLabel, QMessageBox, QPushButton)
 from . import Page
+from .. import theme
 
 
 def fmt_size(n):
@@ -44,7 +46,12 @@ class LibraryPage(Page):
         for i in (1, 2, 3, 4):
             self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
         self.table.setSortingEnabled(True)
-        self.layout_.addWidget(self.table, 1)
+        row_h = self.table.rowHeight(0) if self.table.rowCount() else 28
+        want = self.table.horizontalHeader().height() + 2 + row_h * self.table.rowCount() + 6
+        self.table.setMinimumHeight(min(want, 150))
+        self.table.setMaximumHeight(max(min(want, 620), 120))
+        self.layout_.addWidget(self.table, 0)
+        self.layout_.addStretch(1)
 
         row = QHBoxLayout()
         self.open_btn = QPushButton('Show in folder')
@@ -117,13 +124,27 @@ class LibraryPage(Page):
             st = f.get('_status', 'ok')
             st_item = QTableWidgetItem(st)
             if st == 'ok':
-                st_item.setForeground(Qt.green)
+                st_item.setForeground(QColor(theme.GOOD))
             elif st in ('broken', 'risky script'):
-                st_item.setForeground(Qt.red)
+                st_item.setForeground(QColor(theme.BAD))
             else:
-                st_item.setForeground(Qt.yellow)
+                st_item.setForeground(QColor(theme.WARN))
+            f = item.font()
+            f.setBold(st != 'ok')
+            st_item.setFont(f)
             self.table.setItem(i, 4, st_item)
+            if st != 'ok':
+                # tint the row background so problems are visible at a glance
+                tint = QColor('#2a1d1c') if st in ('broken', 'risky script') else QColor('#2a2617')
+                for col in range(5):
+                    cell = self.table.item(i, col)
+                    if cell is not None:
+                        cell.setBackground(tint)
         self.table.setSortingEnabled(True)
+        row_h = self.table.rowHeight(0) if self.table.rowCount() else 28
+        want = self.table.horizontalHeader().height() + 2 + row_h * self.table.rowCount() + 6
+        self.table.setMinimumHeight(min(want, 150))
+        self.table.setMaximumHeight(max(min(want, 620), 120))
 
     def _selected_paths(self):
         paths, seen = [], set()

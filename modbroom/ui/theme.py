@@ -15,14 +15,17 @@ BORDER   = '#2e333d'
 
 QSS = f"""
 QWidget {{ background: {BG}; color: {TEXT}; font-size: 13px; }}
+QLabel, QCheckBox {{ background: transparent; }}
 QMainWindow {{ background: {BG}; }}
 QFrame#sidebar {{ background: {PANEL}; border: none; border-right: 1px solid {BORDER}; }}
 QFrame#card {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 10px; }}
 QFrame#card:hover {{ border-color: {PANEL3}; }}
+QFrame#statinner {{ background: transparent; }}
+QFrame#banner {{ border-radius: 8px; padding: 2px; }}
 QLabel#h1 {{ font-size: 22px; font-weight: 600; color: {TEXT}; }}
 QLabel#h2 {{ font-size: 15px; font-weight: 600; color: {TEXT}; }}
 QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
-QLabel#statNumber {{ font-size: 30px; font-weight: 700; color: {TEXT}; }}
+QLabel#statNumber {{ font-size: 32px; font-weight: 700; color: {TEXT}; }}
 QLabel#statLabel {{ color: {MUTED}; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }}
 QPushButton {{
     background: {PANEL3}; border: 1px solid {BORDER}; border-radius: 8px;
@@ -46,6 +49,7 @@ QComboBox, QSpinBox {{
     background: {PANEL2}; border: 1px solid {BORDER}; border-radius: 8px; padding: 6px 8px; color: {TEXT};
 }}
 QComboBox::drop-down {{ border: none; width: 18px; }}
+QFormLayout QLabel {{ color: {TEXT}; }}
 QTreeWidget, QTableWidget, QListWidget {{
     background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px;
     alternate-background-color: #1f232b; gridline-color: {BORDER};
@@ -64,6 +68,7 @@ QProgressBar {{
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 8px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; }}
 QScrollBar::handle:vertical {{ background: {PANEL3}; border-radius: 5px; min-height: 30px; }}
+QTabWidget::pane {{ border: none; background: transparent; top: -1px; }}
 QTabBar::tab {{ padding: 8px 16px; border: none; background: transparent; color: {MUTED}; }}
 QTabBar::tab:selected {{ color: {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; }}

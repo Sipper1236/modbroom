@@ -1,6 +1,7 @@
 """Small shared widgets."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QFrame, QLabel, QVBoxLayout, QWidget)
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (QFrame, QLabel, QVBoxLayout, QWidget, QTableWidgetItem)
 from . import theme
 
 
@@ -30,7 +31,14 @@ class StatCard(QFrame):
 
     def set_value(self, value, color=None):
         self.value.setText(str(value))
-        self.value.setStyleSheet('color: %s;' % (color or theme.TEXT))
+        accent = color or theme.TEXT
+        self.value.setStyleSheet('color: %s;' % accent)
+        if color:
+            self.setStyleSheet(
+                'QFrame#card { border: 1px solid %s; border-left: 3px solid %s; }'
+                % (theme.PANEL3, color))
+        else:
+            self.setStyleSheet('')
 
 
 class SectionHeader(QWidget):
@@ -76,3 +84,16 @@ def scan_in_thread(state, on_progress, on_done, on_error):
         core.run_scan(state, on_progress=on_progress, on_done=on_done, on_error=on_error)
 
     threading.Thread(target=work, daemon=True).start()
+
+
+def tone_item(text, color=None, bold=False, bg=None):
+    """A table cell whose colour carries meaning (severity, winner, etc.)."""
+    item = QTableWidgetItem(str(text))
+    if color:
+        item.setForeground(QColor(color))
+    if bg:
+        item.setBackground(QColor(bg))
+    font = item.font()
+    font.setBold(bold)
+    item.setFont(font)
+    return item

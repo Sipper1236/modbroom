@@ -38,13 +38,13 @@ class Bridge(QObject):
 
 
 PAGES = [
-    ('Dashboard', 'Overview and health', dashboard.DashboardPage),
-    ('Library', 'Every file found', library.LibraryPage),
-    ('Diagnostics', 'Duplicates, conflicts, broken files', diagnostics.DiagnosticsPage),
-    ('50/50 Test', 'Binary-search the broken mod', fifty.FiftyPage),
-    ('Tools', 'Quarantine, backups, export, crash logs', tools.ToolsPage),
-    ('Companion', 'In-game mod + link status', companion.CompanionPage),
-    ('Settings', 'Folders and options', settings.SettingsPage),
+    ('⌂  Dashboard', 'Overview and health', dashboard.DashboardPage),
+    ('☰  Library', 'Every file found', library.LibraryPage),
+    ('⚠  Diagnostics', 'Duplicates, conflicts, broken files', diagnostics.DiagnosticsPage),
+    ('½  50/50 Test', 'Binary-search the broken mod', fifty.FiftyPage),
+    ('🛠  Tools', 'Quarantine, backups, export, crash logs', tools.ToolsPage),
+    ('✦  Companion', 'In-game mod + link status', companion.CompanionPage),
+    ('⌘  Settings', 'Folders and options', settings.SettingsPage),
 ]
 
 
